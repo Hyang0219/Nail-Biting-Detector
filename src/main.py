@@ -1,5 +1,10 @@
 import sys
-from PyQt6.QtWidgets import QApplication
+import os
+
+# Add project root to Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from PySide6.QtWidgets import QApplication
 from gui.main_window import MainWindow
 
 def main():
