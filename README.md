@@ -11,6 +11,14 @@ Version 2.0
 - Added support for Python 3.12
 - Updated to latest compatible libraries (TensorFlow 2.18+, MediaPipe 0.10.18+)
 
+Version 1.0
+- MediaPipe Hand Pose + Geometric Approach (Quick Solution):
+  * Instead of relying on the pre-trained classification model, the model uses MediaPipe's hand landmarks
+  * Calculate the distance between fingertips and mouth landmarks
+  * Check finger orientation relative to the mouth
+  * Add gesture recognition for common nail-biting poses
+  * This would be more reliable and faster than the current ML approach as an MVP
+
 ## Features
 
 - Real-time webcam monitoring
