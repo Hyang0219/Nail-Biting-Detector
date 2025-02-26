@@ -1,6 +1,6 @@
 import pytest
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import Qt
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
 import sys
 import os
 from gui.main_window import MainWindow

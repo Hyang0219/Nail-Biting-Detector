@@ -11,6 +11,10 @@ from multiprocessing import Pool
 import time
 from urllib.parse import urlparse
 import logging
+import requests
+from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urljoin
 
 # Configure logging
 logging.basicConfig(
@@ -161,6 +165,35 @@ def validate_url(url: str) -> bool:
         return all([result.scheme, result.netloc])
     except:
         return False
+
+def scrape_page(url):
+    """Scrape a single web page."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.text, 'html5lib')
+        return soup
+    except Exception as e:
+        logging.error(f"Error scraping {url}: {str(e)}")
+        return None
+
+def scrape_urls(urls, max_workers=5):
+    """Scrape multiple URLs in parallel."""
+    results = []
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for url in urls:
+            futures.append(executor.submit(scrape_page, url))
+            time.sleep(1)  # Be nice to servers
+        
+        for future in futures:
+            results.append(future.result())
+    
+    return results
 
 def main():
     parser = argparse.ArgumentParser(description='Fetch and extract text content from webpages.')
