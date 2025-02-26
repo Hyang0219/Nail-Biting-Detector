@@ -1,7 +1,7 @@
-from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
+from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
                                QPushButton, QLabel, QSlider, QHBoxLayout)
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QImage, QPixmap
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QPixmap
 import cv2
 import mediapipe as mp
 from datetime import datetime
@@ -51,6 +51,7 @@ class MainWindow(QMainWindow):
         self.sensitivity_slider.setMinimum(1)
         self.sensitivity_slider.setMaximum(10)
         self.sensitivity_slider.setValue(5)
+        self.sensitivity_slider.valueChanged.connect(self.update_sensitivity)
         sensitivity_layout.addWidget(sensitivity_label)
         sensitivity_layout.addWidget(self.sensitivity_slider)
         controls_layout.addLayout(sensitivity_layout)
@@ -66,13 +67,19 @@ class MainWindow(QMainWindow):
         layout.addLayout(controls_layout)
         
     def setup_camera(self):
-        self.camera = cv2.VideoCapture(0)
+        """Setup webcam capture."""
+        self.cap = cv2.VideoCapture(0)
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.is_monitoring = False
         
     def setup_detector(self):
-        self.detector = GestureDetector()
+        """Setup gesture detector."""
+        # Use the best performing model
+        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                'models', 'best_model_04_0.750.keras')
+        self.detector = GestureDetector(model_path=model_path, 
+                                      sensitivity=self.sensitivity_slider.value() / 10.0)
         
     def setup_logger(self):
         self.logger = setup_logger()
@@ -90,38 +97,54 @@ class MainWindow(QMainWindow):
         samples = (np.sin(2 * np.pi * frequency * t) * 32767).astype(np.int16)
         self.alert_sound = sa.WaveObject(samples, 1, 2, sample_rate)
         
+    def update_sensitivity(self):
+        """Update detector sensitivity when slider changes."""
+        if hasattr(self, 'detector'):
+            # Convert slider value (1-10) to sensitivity (0.1-1.0)
+            sensitivity = self.sensitivity_slider.value() / 10.0
+            self.detector.update_sensitivity(sensitivity)
+        
     def toggle_monitoring(self):
-        self.is_monitoring = not self.is_monitoring
-        if self.is_monitoring:
-            self.toggle_button.setText("Stop Monitoring")
-            self.status_label.setText("Status: Monitoring")
+        """Toggle webcam monitoring on/off."""
+        if not self.is_monitoring:
             self.timer.start(30)  # 30ms = ~33 fps
+            self.toggle_button.setText("Stop Monitoring")
+            self.is_monitoring = True
         else:
-            self.toggle_button.setText("Start Monitoring")
-            self.status_label.setText("Status: Not Monitoring")
             self.timer.stop()
+            self.toggle_button.setText("Start Monitoring")
+            self.is_monitoring = False
             # End analytics session
             self.analytics.end_session()
             # Update statistics display
             self.update_statistics()
             
     def update_frame(self):
-        ret, frame = self.camera.read()
+        """Process and display the next frame."""
+        ret, frame = self.cap.read()
         if ret:
-            # Process frame for nail-biting detection
-            frame, is_biting = self.detector.process_frame(frame)
+            # Process frame with detector
+            frame_with_detections, is_biting = self.detector.process_frame(frame)
             
             if is_biting:
-                self.on_nail_biting_detected()
+                self.play_alert()
+                self.log_event()
             
-            # Convert frame to Qt format for display
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Convert frame to Qt format and display
+            rgb_frame = cv2.cvtColor(frame_with_detections, cv2.COLOR_BGR2RGB)
             h, w, ch = rgb_frame.shape
             bytes_per_line = ch * w
             qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
             self.camera_label.setPixmap(QPixmap.fromImage(qt_image))
             
-    def on_nail_biting_detected(self):
+    def play_alert(self):
+        # Play alert sound
+        try:
+            self.alert_sound.play()
+        except Exception as e:
+            self.logger.error(f"Failed to play alert sound: {e}")
+            
+    def log_event(self):
         # Log the event
         self.logger.info("Nail biting detected")
         
@@ -131,12 +154,6 @@ class MainWindow(QMainWindow):
         # Update statistics display
         self.update_statistics()
         
-        # Play alert sound
-        try:
-            self.alert_sound.play()
-        except Exception as e:
-            self.logger.error(f"Failed to play alert sound: {e}")
-            
     def update_statistics(self):
         """Update the statistics display."""
         daily_summary = self.analytics.get_daily_summary(days=1)[0]
@@ -145,5 +162,5 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.is_monitoring:
             self.analytics.end_session()
-        self.camera.release()
+        self.cap.release()
         super().closeEvent(event) 
