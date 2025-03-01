@@ -21,20 +21,29 @@ class GestureDetector:
         self.mp_face_mesh = mp.solutions.face_mesh
         self.mp_drawing = mp.solutions.drawing_utils
         
-        # Initialize MediaPipe solutions
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=2,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
-        
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            static_image_mode=False,
-            max_num_faces=1,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
+        # Initialize MediaPipe solutions with more conservative settings
+        try:
+            self.hands = self.mp_hands.Hands(
+                static_image_mode=False,
+                max_num_hands=1,  # Reduced from 2 to 1 for stability
+                min_detection_confidence=0.6,  # Increased from 0.5 for more reliable detection
+                min_tracking_confidence=0.6,   # Increased from 0.5 for more stable tracking
+                model_complexity=0  # Use the lightest model for better performance
+            )
+            
+            self.face_mesh = self.mp_face_mesh.FaceMesh(
+                static_image_mode=False,
+                max_num_faces=1,
+                min_detection_confidence=0.6,  # Increased from 0.5
+                min_tracking_confidence=0.6,   # Increased from 0.5
+                refine_landmarks=False  # Disable landmark refinement for better performance
+            )
+            logging.info("MediaPipe models initialized successfully")
+        except Exception as e:
+            logging.error(f"Error initializing MediaPipe models: {e}")
+            # Create dummy objects that will safely return empty results
+            self.hands = None
+            self.face_mesh = None
         
         # Mouth landmarks indices (upper and lower lip)
         self.MOUTH_LANDMARKS = [13, 14, 78, 308, 415, 318, 324, 402, 317, 14, 87, 178, 88, 95]
@@ -58,23 +67,34 @@ class GestureDetector:
         
         # Load ML model if available
         self.model = None
-        if model_path is None:
-            # Try to find the latest model in the models directory
-            models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'models')
-            if os.path.exists(models_dir):
-                model_files = [f for f in os.listdir(models_dir) if f.endswith('.keras')]
-                if model_files:
-                    latest_model = max(model_files)
-                    model_path = os.path.join(models_dir, latest_model)
-        
-        if model_path and os.path.exists(model_path):
-            try:
-                self.model = tf.keras.models.load_model(model_path)
-                logging.info(f"Loaded ML model from {model_path}")
-            except Exception as e:
-                logging.error(f"Failed to load ML model: {e}")
-        
         self.input_size = (224, 224)  # Model input size
+        self.load_model(model_path)
+    
+    def load_model(self, model_path=None):
+        """Load model for prediction."""
+        try:
+            if model_path is None:
+                # Try to find the latest model in the models directory
+                models_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+                if os.path.exists(models_dir):
+                    model_files = [f for f in os.listdir(models_dir) if f.endswith('.keras') or f.endswith('.h5')]
+                    if model_files:
+                        latest_model = max(model_files)
+                        model_path = os.path.join(models_dir, latest_model)
+            
+            if model_path and os.path.exists(model_path):
+                logging.info(f"Loading model from {model_path}")
+                self.model = tf.keras.models.load_model(model_path)
+                self.model_loaded = True
+                logging.info(f"Loaded ML model from {model_path}")
+            else:
+                logging.warning("No model specified or found. Using geometric approach only.")
+                self.model_loaded = False
+                self.model = None
+        except Exception as e:
+            logging.error(f"Failed to load ML model: {e}")
+            self.model_loaded = False
+            self.model = None
     
     def update_sensitivity(self, sensitivity):
         """Update detection thresholds based on sensitivity value (0.0 to 1.0)."""
@@ -124,7 +144,8 @@ class GestureDetector:
                 distances.append(dist / frame_height)
         
         # Check if maximum distance between any two fingertips is small enough
-        return max(distances) if distances else False < self.cluster_threshold
+        max_distance = max(distances) if distances else float('inf')
+        return max_distance < self.cluster_threshold
     
     def is_hand_near_mouth(self, hand_landmarks, mouth_center, frame_height):
         """Check if any fingertip is near the mouth."""
@@ -153,39 +174,65 @@ class GestureDetector:
                 self.consecutive_detections = 0
             return False
         
-        # State machine logic with ML integration
-        if len(near_fingers) > 0:
-            if len(pointing_fingers) > 0 and len(bent_fingers) > 0:
-                self.consecutive_detections += 1
-                if self.consecutive_detections >= self.consecutive_frames_threshold:
-                    # If ML model is available, use it to confirm the detection
-                    if ml_prediction is not None and ml_prediction > self.ml_confidence_threshold:
-                        if self.current_state in [GestureState.POTENTIAL_BITING, GestureState.HAND_NEAR_MOUTH]:
-                            self.current_state = GestureState.BITING
-                            self.last_detection_time = now
-                            self.current_state = GestureState.COOLDOWN
-                            self.consecutive_detections = 0
-                            return True
-                    elif ml_prediction is None:  # Fall back to geometric approach if no ML model
-                        if self.current_state in [GestureState.POTENTIAL_BITING, GestureState.HAND_NEAR_MOUTH]:
-                            self.current_state = GestureState.BITING
-                            self.last_detection_time = now
-                            self.current_state = GestureState.COOLDOWN
-                            self.consecutive_detections = 0
-                            return True
-                self.current_state = GestureState.POTENTIAL_BITING
-            else:
-                self.current_state = GestureState.HAND_NEAR_MOUTH
-                self.consecutive_detections = max(0, self.consecutive_detections - 1)
-        else:
-            self.current_state = GestureState.IDLE
+        # Hybrid detection system:
+        # 1. When hand is far away from the mouth, stay IDLE
+        # 2. When hand gets near to the mouth, start tracking potential biting
+        # 3. Only use ML model when hand is near mouth
+        
+        # Step 1: Check if hand is near mouth
+        if len(near_fingers) == 0:
+            # Hand is far from mouth, reset state to IDLE
+            if self.current_state != GestureState.IDLE:
+                self.current_state = GestureState.IDLE
             self.consecutive_detections = 0
+            return False
+        
+        # Step 2: Hand is near mouth, track potential biting
+        if len(pointing_fingers) > 0 and len(bent_fingers) > 0:
+            # Potential biting pattern detected
+            self.consecutive_detections += 1
+            
+            # Step 3: Confirm with ML model if available and we've seen enough frames
+            if self.consecutive_detections >= self.consecutive_frames_threshold:
+                # Only use ML model when we're already in a potential biting state
+                if self.current_state in [GestureState.POTENTIAL_BITING, GestureState.HAND_NEAR_MOUTH]:
+                    # If ML model is available and predicts biting
+                    if ml_prediction is not None:
+                        if ml_prediction > self.ml_confidence_threshold:
+                            # ML confirms biting
+                            self.current_state = GestureState.BITING
+                            self.last_detection_time = now
+                            self.current_state = GestureState.COOLDOWN
+                            self.consecutive_detections = 0
+                            return True
+                        # If ML model is confident it's NOT biting, reset detection counter
+                        elif ml_prediction < (1 - self.ml_confidence_threshold):
+                            self.consecutive_detections = max(0, self.consecutive_detections - 1)
+                    else:
+                        # No ML model, rely on geometric approach
+                        self.current_state = GestureState.BITING
+                        self.last_detection_time = now
+                        self.current_state = GestureState.COOLDOWN
+                        self.consecutive_detections = 0
+                        return True
+            
+            # Update state to POTENTIAL_BITING
+            self.current_state = GestureState.POTENTIAL_BITING
+        else:
+            # Hand is near mouth but no biting detected
+            self.current_state = GestureState.HAND_NEAR_MOUTH
+            self.consecutive_detections = max(0, self.consecutive_detections - 1)
         
         return False
     
     def get_roi_for_model(self, frame, hand_landmarks, mouth_bbox):
-        """Extract and preprocess ROI for ML model."""
+        """Extract and preprocess ROI for ML model with improved focus on hand-mouth interaction."""
         try:
+            # Check if inputs are valid
+            if frame is None or hand_landmarks is None or mouth_bbox is None:
+                logging.warning("Invalid inputs for ROI extraction")
+                return None, None
+                
             # Convert landmarks to numpy array
             points = np.array([[lm.x * frame.shape[1], lm.y * frame.shape[0]] 
                              for lm in hand_landmarks.landmark], dtype=np.int32)
@@ -195,48 +242,143 @@ class GestureDetector:
             
             # Expand box to include mouth area if close
             mx, my, mw, mh = mouth_bbox
-            combined_x = min(x, mx)
-            combined_y = min(y, my)
-            combined_w = max(x + w, mx + mw) - combined_x
-            combined_h = max(y + h, my + mh) - combined_y
             
-            # Add padding
-            pad = 20
-            combined_x = max(0, combined_x - pad)
-            combined_y = max(0, combined_y - pad)
-            combined_w = min(frame.shape[1] - combined_x, combined_w + 2*pad)
-            combined_h = min(frame.shape[0] - combined_y, combined_h + 2*pad)
+            # Validate mouth bbox
+            if mx < 0 or my < 0 or mw <= 0 or mh <= 0:
+                logging.warning("Invalid mouth bounding box")
+                return None, None
+                
+            # Calculate center points
+            hand_center = (x + w//2, y + h//2)
+            mouth_center = (mx + mw//2, my + mh//2)
             
+            # Calculate distance between hand and mouth centers
+            distance = self.calculate_distance(hand_center, mouth_center)
+            
+            # Calculate dynamic padding based on distance and frame size
+            # More padding when hand and mouth are further apart
+            frame_diagonal = np.sqrt(frame.shape[0]**2 + frame.shape[1]**2)
+            distance_factor = min(1.0, distance / (frame_diagonal * 0.2))  # Normalize by 20% of frame diagonal
+            
+            # Base padding as percentage of frame size for better scaling
+            base_padding_percent = 0.05  # 5% of frame size
+            base_padding = int(min(frame.shape[0], frame.shape[1]) * base_padding_percent)
+            
+            # Dynamic padding increases with distance but caps at reasonable value
+            max_padding_percent = 0.15  # 15% of frame size
+            max_padding = int(min(frame.shape[0], frame.shape[1]) * max_padding_percent)
+            dynamic_padding = int(base_padding + (distance_factor * (max_padding - base_padding)))
+            
+            # Create a bounding box that encompasses both hand and mouth with intelligent padding
+            combined_x = min(x, mx) - dynamic_padding
+            combined_y = min(y, my) - dynamic_padding
+            combined_w = max(x + w, mx + mw) - combined_x + dynamic_padding
+            combined_h = max(y + h, my + mh) - combined_y + dynamic_padding
+            
+            # Ensure the box stays within the frame
+            combined_x = max(0, combined_x)
+            combined_y = max(0, combined_y)
+            combined_w = min(frame.shape[1] - combined_x, combined_w)
+            combined_h = min(frame.shape[0] - combined_y, combined_h)
+            
+            # Make the ROI square to avoid distortion during resizing
+            # Find the center of the ROI
+            center_x = combined_x + combined_w // 2
+            center_y = combined_y + combined_h // 2
+            
+            # Make the ROI square based on the larger dimension
+            square_size = max(combined_w, combined_h)
+            
+            # Recalculate the ROI coordinates to be centered and square
+            square_x = center_x - square_size // 2
+            square_y = center_y - square_size // 2
+            
+            # Ensure the square ROI stays within the frame
+            square_x = max(0, min(square_x, frame.shape[1] - square_size))
+            square_y = max(0, min(square_y, frame.shape[0] - square_size))
+            
+            # If square extends beyond frame, adjust size
+            if square_x + square_size > frame.shape[1]:
+                square_size = frame.shape[1] - square_x
+            if square_y + square_size > frame.shape[0]:
+                square_size = frame.shape[0] - square_y
+            
+            # Ensure we have a valid ROI size
+            if square_size <= 0:
+                logging.warning("Invalid ROI size calculated")
+                return None, None
+                
             # Crop region
-            roi = frame[combined_y:combined_y+combined_h, 
-                      combined_x:combined_x+combined_w]
+            roi = frame[square_y:square_y+square_size, square_x:square_x+square_size]
             
+            # Verify ROI is not empty
+            if roi.size == 0 or roi.shape[0] == 0 or roi.shape[1] == 0:
+                logging.warning("Empty ROI extracted")
+                return None, None
+                
             # Resize and preprocess for model
-            if roi.size > 0:
-                roi = cv2.resize(roi, self.input_size)
-                roi = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-                roi = roi.astype(np.float32) / 255.0
-                return roi
+            # Apply contrast normalization to enhance features
+            roi_yuv = cv2.cvtColor(roi, cv2.COLOR_BGR2YUV)
+            roi_yuv[:,:,0] = cv2.equalizeHist(roi_yuv[:,:,0])
+            roi_enhanced = cv2.cvtColor(roi_yuv, cv2.COLOR_YUV2BGR)
             
-            return None
+            # Resize to model input size
+            roi_resized = cv2.resize(roi_enhanced, self.input_size)
+            
+            # Convert to RGB and normalize
+            roi_rgb = cv2.cvtColor(roi_resized, cv2.COLOR_BGR2RGB)
+            roi_normalized = roi_rgb.astype(np.float32) / 255.0
+            
+            # Log ROI extraction details for debugging
+            logging.debug(f"ROI extracted: hand-mouth distance={distance:.2f}, " 
+                         f"padding={dynamic_padding}, size={square_size}x{square_size}")
+            
+            return roi_normalized, (square_x, square_y, square_size, square_size)  # Return ROI and its coordinates
+            
         except Exception as e:
             logging.error(f"Error preparing ROI: {e}")
-            return None
+            return None, None
     
     def process_frame(self, frame):
+        # Check if MediaPipe models are available
+        if self.hands is None or self.face_mesh is None:
+            logging.warning("MediaPipe models not available, returning original frame")
+            # Draw a warning message on the frame
+            cv2.putText(frame,
+                      "MediaPipe initialization failed",
+                      (10, 30),
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      0.7,
+                      (0, 0, 255),
+                      2)
+            return frame, False
+            
         # Convert the BGR image to RGB
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         
-        # Process hands
-        hand_results = self.hands.process(rgb_frame)
-        
-        # Process face
-        face_results = self.face_mesh.process(rgb_frame)
+        try:
+            # Process hands
+            hand_results = self.hands.process(rgb_frame)
+            
+            # Process face
+            face_results = self.face_mesh.process(rgb_frame)
+        except Exception as e:
+            logging.error(f"Error processing frame with MediaPipe: {e}")
+            # Draw error message on the frame
+            cv2.putText(frame,
+                      f"MediaPipe error: {str(e)[:30]}",
+                      (10, 30),
+                      cv2.FONT_HERSHEY_SIMPLEX,
+                      0.7,
+                      (0, 0, 255),
+                      2)
+            return frame, False
         
         # Draw initial rectangles
         frame_with_detections = frame.copy()
         is_biting = False
         ml_prediction = None
+        roi_bbox = None
         
         # Get mouth position if face is detected
         mouth_center = None
@@ -259,8 +401,8 @@ class GestureDetector:
                         (mouth_x + mouth_w, mouth_y + mouth_h),
                         (0, 255, 0), 2)
         
-        # Process hands and check for nail biting
-        if hand_results.multi_hand_landmarks and mouth_center:
+        # Process hands even if no face detected (for tracking purposes)
+        if hand_results.multi_hand_landmarks:
             for hand_landmarks in hand_results.multi_hand_landmarks:
                 # Get hand bounding box for visualization
                 hand_points = np.array([
@@ -271,47 +413,83 @@ class GestureDetector:
                 
                 hand_x, hand_y, hand_w, hand_h = cv2.boundingRect(hand_points)
                 
-                # Check for nail biting gestures
-                near_fingers = self.is_hand_near_mouth(hand_landmarks, mouth_center, frame.shape[0])
-                
+                # Initialize finger analysis variables
+                near_fingers = []
                 pointing_fingers = []
                 bent_fingers = []
                 
-                for tip_idx, mid_idx, base_idx in zip(self.FINGERTIPS, self.FINGER_MIDS, self.FINGER_BASES):
-                    tip = (hand_landmarks.landmark[tip_idx].x * frame.shape[1],
-                          hand_landmarks.landmark[tip_idx].y * frame.shape[0])
-                    mid = (hand_landmarks.landmark[mid_idx].x * frame.shape[1],
-                          hand_landmarks.landmark[mid_idx].y * frame.shape[0])
-                    base = (hand_landmarks.landmark[base_idx].x * frame.shape[1],
-                           hand_landmarks.landmark[base_idx].y * frame.shape[0])
+                # Only perform full analysis if face/mouth is detected
+                if mouth_center:
+                    # Check for nail biting gestures
+                    near_fingers = self.is_hand_near_mouth(hand_landmarks, mouth_center, frame.shape[0])
                     
-                    if self.is_finger_pointing_to_mouth(tip, mid, mouth_center):
-                        pointing_fingers.append(tip)
-                    
-                    if self.is_finger_bent(tip, mid, base):
-                        bent_fingers.append(tip)
+                    # Only analyze finger positions if hand is near mouth
+                    if near_fingers:
+                        for tip_idx, mid_idx, base_idx in zip(self.FINGERTIPS, self.FINGER_MIDS, self.FINGER_BASES):
+                            tip = (hand_landmarks.landmark[tip_idx].x * frame.shape[1],
+                                  hand_landmarks.landmark[tip_idx].y * frame.shape[0])
+                            mid = (hand_landmarks.landmark[mid_idx].x * frame.shape[1],
+                                  hand_landmarks.landmark[mid_idx].y * frame.shape[0])
+                            base = (hand_landmarks.landmark[base_idx].x * frame.shape[1],
+                                   hand_landmarks.landmark[base_idx].y * frame.shape[0])
+                            
+                            if self.is_finger_pointing_to_mouth(tip, mid, mouth_center):
+                                pointing_fingers.append(tip)
+                            
+                            if self.is_finger_bent(tip, mid, base):
+                                bent_fingers.append(tip)
+                        
+                        # Check if detected fingers are clustered
+                        clustered = self.are_fingertips_clustered(near_fingers, frame.shape[0])
+                        
+                        # Only use ML model if hand is near mouth
+                        if self.model is not None and len(near_fingers) > 0:
+                            roi, roi_coords = self.get_roi_for_model(frame, hand_landmarks, mouth_bbox)
+                            if roi is not None and roi_coords is not None:
+                                try:
+                                    # Add batch dimension
+                                    roi = np.expand_dims(roi, 0)
+                                    # Get model prediction
+                                    ml_prediction = float(self.model.predict(roi, verbose=0)[0][0])
+                                    roi_bbox = roi_coords
+                                    
+                                    # Draw ML confidence on frame
+                                    confidence_text = f"ML: {ml_prediction:.2f}"
+                                    confidence_color = (0, 255, 255) if ml_prediction > self.ml_confidence_threshold else (255, 255, 255)
+                                    cv2.putText(frame_with_detections, confidence_text, 
+                                              (roi_coords[0], roi_coords[1] - 10), 
+                                              cv2.FONT_HERSHEY_SIMPLEX, 0.5, confidence_color, 2)
+                                    
+                                    # Draw ROI box
+                                    cv2.rectangle(frame_with_detections, 
+                                                (roi_coords[0], roi_coords[1]), 
+                                                (roi_coords[0] + roi_coords[2], roi_coords[1] + roi_coords[3]), 
+                                                confidence_color, 2)
+                                except Exception as e:
+                                    logging.error(f"Error during model prediction: {e}")
+                                    ml_prediction = None
+                                    roi_bbox = None
                 
-                # Check if detected fingers are clustered
-                clustered = self.are_fingertips_clustered(near_fingers, frame.shape[0])
-                
-                # Use ML model if available
-                if self.model is not None and len(near_fingers) > 0:
-                    roi = self.get_roi_for_model(frame, hand_landmarks, mouth_bbox)
-                    if roi is not None:
-                        # Add batch dimension
-                        roi = np.expand_dims(roi, 0)
-                        # Get model prediction
-                        ml_prediction = float(self.model.predict(roi, verbose=0)[0])
-                
-                # Update detection state
-                is_biting = self.update_state(near_fingers, pointing_fingers, bent_fingers, ml_prediction)
+                    # Update detection state only if face/mouth is detected
+                    is_biting = self.update_state(near_fingers, pointing_fingers, bent_fingers, ml_prediction)
                 
                 # Draw hand rectangle with appropriate color
                 color = (0, 0, 255) if is_biting else (255, 0, 0)
+                if mouth_center is None:
+                    color = (255, 255, 0)  # Yellow when no face detected
+                
                 cv2.rectangle(frame_with_detections,
                             (hand_x, hand_y),
                             (hand_x + hand_w, hand_y + hand_h),
                             color, 2)
+                
+                # Draw ROI rectangle if available
+                if roi_bbox is not None:
+                    rx, ry, rw, rh = roi_bbox
+                    cv2.rectangle(frame_with_detections,
+                                (rx, ry),
+                                (rx + rw, ry + rh),
+                                (255, 165, 0), 2)  # Orange for ROI, thicker line
                 
                 # Draw detection status
                 status_text = f"State: {self.current_state.name}"
@@ -331,8 +509,18 @@ class GestureDetector:
                           metrics_text,
                           (10, 60),
                           cv2.FONT_HERSHEY_SIMPLEX,
-                          1,
+                          0.7,
                           color,
+                          2)
+                
+                # Add threshold info to visualize sensitivity settings
+                threshold_text = f"Dist: {self.distance_threshold:.2f}, Angle: {int(self.angle_threshold)}°, ML: {self.ml_confidence_threshold:.2f}"
+                cv2.putText(frame_with_detections,
+                          threshold_text,
+                          (10, 90),
+                          cv2.FONT_HERSHEY_SIMPLEX,
+                          0.7,
+                          (255, 255, 255),
                           2)
         
         return frame_with_detections, is_biting 
