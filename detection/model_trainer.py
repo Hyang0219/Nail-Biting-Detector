@@ -17,6 +17,7 @@ class ModelTrainer:
         self.batch_size = 32
         self.use_mixup = True  # Re-enable MixUp
         self.mixup_alpha = 0.2  # Alpha parameter for beta distribution in MixUp
+        self.use_advanced_augmentation = True  # Flag to control augmentation complexity
         
         # Create model directory if it doesn't exist
         os.makedirs(self.model_dir, exist_ok=True)
@@ -36,22 +37,33 @@ class ModelTrainer:
     def prepare_dataset(self, validation_split=0.2):
         """Prepare training and validation datasets with augmentation."""
         # Advanced data augmentation for training
-        train_datagen = ImageDataGenerator(
-            rescale=1./255,
-            rotation_range=20,
-            width_shift_range=0.2,
-            height_shift_range=0.2,
-            shear_range=0.2,
-            zoom_range=0.2,
-            horizontal_flip=True,
-            # Advanced color augmentations
-            brightness_range=[0.8, 1.2],
-            channel_shift_range=30.0,  # Random shifts in RGB channels
-            # HSV shifts can be simulated with preprocessing function
-            preprocessing_function=self.color_augmentation,
-            fill_mode='nearest',
-            validation_split=validation_split
-        )
+        if self.use_advanced_augmentation:
+            train_datagen = ImageDataGenerator(
+                rescale=1./255,
+                rotation_range=20,
+                width_shift_range=0.2,
+                height_shift_range=0.2,
+                shear_range=0.2,
+                zoom_range=0.2,
+                horizontal_flip=True,
+                # Advanced color augmentations
+                brightness_range=[0.8, 1.2],
+                channel_shift_range=30.0,  # Random shifts in RGB channels
+                # HSV shifts can be simulated with preprocessing function
+                preprocessing_function=self.color_augmentation,
+                fill_mode='nearest',
+                validation_split=validation_split
+            )
+        else:
+            # Simplified augmentation for faster training
+            train_datagen = ImageDataGenerator(
+                rescale=1./255,
+                rotation_range=10,
+                width_shift_range=0.1,
+                height_shift_range=0.1,
+                horizontal_flip=True,
+                validation_split=validation_split
+            )
         
         # Only rescaling for validation
         val_datagen = ImageDataGenerator(
@@ -222,7 +234,7 @@ class ModelTrainer:
         model = self.build_model()
         
         # Create a timestamp for this training run
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         
         # Create logs directory if it doesn't exist
         logs_dir = 'logs'
@@ -232,7 +244,7 @@ class ModelTrainer:
         callbacks = [
             # Model checkpoint to save the best model
             tf.keras.callbacks.ModelCheckpoint(
-                filepath=os.path.join(self.model_dir, 'mobilenet_model_{epoch:02d}_{val_accuracy:.3f}.keras'),
+                filepath=os.path.join(self.model_dir, f'mobilenet_model_{timestamp}_{{epoch:02d}}_{{val_accuracy:.3f}}.keras'),
                 monitor='val_accuracy',
                 mode='max',
                 save_best_only=True,
@@ -279,15 +291,29 @@ class ModelTrainer:
         self.logger.info(f"- Batch size: {self.batch_size}")
         self.logger.info(f"- Validation split: {validation_split}")
         self.logger.info(f"- MixUp enabled: {self.use_mixup}")
+        self.logger.info(f"- Advanced augmentation: {self.use_advanced_augmentation}")
         self.logger.info(f"- Class weights: {class_weights}")
         self.logger.info(f"- Training samples: {self.train_samples}")
         self.logger.info(f"- Validation samples: {self.val_samples}")
+        
+        # Calculate steps per epoch to avoid infinite generator issue
+        steps_per_epoch = self.train_samples // self.batch_size
+        validation_steps = self.val_samples // self.batch_size
+        
+        # Ensure at least one step
+        steps_per_epoch = max(1, steps_per_epoch)
+        validation_steps = max(1, validation_steps)
+        
+        self.logger.info(f"- Steps per epoch: {steps_per_epoch}")
+        self.logger.info(f"- Validation steps: {validation_steps}")
         
         # Train the model - don't use class weights with MixUp
         history = model.fit(
             train_ds,
             epochs=epochs,
+            steps_per_epoch=steps_per_epoch,
             validation_data=val_ds,
+            validation_steps=validation_steps,
             class_weight=None if self.use_mixup else class_weights,  # Only use class weights if not using MixUp
             callbacks=callbacks,
             verbose=1
@@ -296,7 +322,7 @@ class ModelTrainer:
         # Save final model
         final_model_path = os.path.join(
             self.model_dir,
-            f'mobilenet_model.keras'
+            f'mobilenet_model_{timestamp}.keras'
         )
         model.save(final_model_path)
         self.logger.info(f"Saved final model to {final_model_path}")
@@ -316,41 +342,65 @@ class ModelTrainer:
         
         # Plot accuracy
         plt.subplot(2, 2, 1)
-        plt.plot(history.history['accuracy'])
-        plt.plot(history.history['val_accuracy'])
+        if 'accuracy' in history.history:
+            plt.plot(history.history['accuracy'])
+            if 'val_accuracy' in history.history:
+                plt.plot(history.history['val_accuracy'])
+                plt.legend(['Train', 'Validation'], loc='lower right')
+            else:
+                plt.legend(['Train'], loc='lower right')
         plt.title('Model Accuracy')
         plt.ylabel('Accuracy')
         plt.xlabel('Epoch')
-        plt.legend(['Train', 'Validation'], loc='lower right')
         
         # Plot loss
         plt.subplot(2, 2, 2)
-        plt.plot(history.history['loss'])
-        plt.plot(history.history['val_loss'])
+        if 'loss' in history.history:
+            plt.plot(history.history['loss'])
+            if 'val_loss' in history.history:
+                plt.plot(history.history['val_loss'])
+                plt.legend(['Train', 'Validation'], loc='upper right')
+            else:
+                plt.legend(['Train'], loc='upper right')
         plt.title('Model Loss')
         plt.ylabel('Loss')
         plt.xlabel('Epoch')
-        plt.legend(['Train', 'Validation'], loc='upper right')
         
         # Plot AUC
         plt.subplot(2, 2, 3)
-        plt.plot(history.history['auc'])
-        plt.plot(history.history['val_auc'])
+        legend_items = []
+        if 'auc' in history.history:
+            plt.plot(history.history['auc'])
+            legend_items.append('Train')
+        if 'val_auc' in history.history:
+            plt.plot(history.history['val_auc'])
+            legend_items.append('Validation')
+        if legend_items:
+            plt.legend(legend_items, loc='lower right')
         plt.title('Model AUC')
         plt.ylabel('AUC')
         plt.xlabel('Epoch')
-        plt.legend(['Train', 'Validation'], loc='lower right')
         
         # Plot Precision and Recall
         plt.subplot(2, 2, 4)
-        plt.plot(history.history['precision'])
-        plt.plot(history.history['recall'])
-        plt.plot(history.history['val_precision'])
-        plt.plot(history.history['val_recall'])
+        legend_items = []
+        if 'precision' in history.history:
+            plt.plot(history.history['precision'])
+            legend_items.append('Precision')
+        if 'recall' in history.history:
+            plt.plot(history.history['recall'])
+            legend_items.append('Recall')
+        if 'val_precision' in history.history:
+            plt.plot(history.history['val_precision'])
+            legend_items.append('Val Precision')
+        if 'val_recall' in history.history:
+            plt.plot(history.history['val_recall'])
+            legend_items.append('Val Recall')
+        if legend_items:
+            plt.legend(legend_items, loc='lower right')
         plt.title('Precision and Recall')
         plt.ylabel('Score')
         plt.xlabel('Epoch')
-        plt.legend(['Precision', 'Recall', 'Val Precision', 'Val Recall'], loc='lower right')
         
         plt.tight_layout()
         
