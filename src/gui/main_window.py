@@ -97,8 +97,32 @@ class MainWindow(QMainWindow):
     def setup_detector(self):
         """Setup gesture detector."""
         # Use the best performing model
-        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                'models', 'mobilenet_model.keras')
+        # Find the best model based on validation accuracy in filename
+        models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'models')
+        model_files = [f for f in os.listdir(models_dir) if f.endswith('.keras')]
+        
+        # Try to find the best model by accuracy in filename
+        best_model = None
+        best_acc = 0.0
+        
+        for model_file in model_files:
+            try:
+                # Extract accuracy from filename (e.g., mobilenet_model_20250301-230908_03_0.688.keras)
+                if '_' in model_file and model_file.split('_')[-1].startswith('0.'):
+                    acc = float(model_file.split('_')[-1].split('.keras')[0])
+                    if acc > best_acc:
+                        best_acc = acc
+                        best_model = model_file
+            except:
+                continue
+        
+        if best_model:
+            model_path = os.path.join(models_dir, best_model)
+            self.logger.info(f"Using best model: {best_model} (accuracy: {best_acc})")
+        else:
+            # Fallback to the latest model
+            model_path = os.path.join(models_dir, 'mobilenet_model_20250301-230908_03_0.688.keras')
+            self.logger.info(f"Using fallback model: {model_path}")
         
         # Get current settings from UI
         sensitivity = self.sensitivity_slider.value() / 10.0
