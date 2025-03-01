@@ -1,8 +1,125 @@
-# Nail-Biting Detection Application
+# Nail-Biting Detection
 
-This application uses computer vision to detect nail-biting behavior and alerts users in real-time. It uses your computer's webcam to monitor hand movements near the mouth and provides immediate feedback when nail-biting is detected.
+A real-time application that uses computer vision and machine learning to detect nail-biting behavior and help users overcome this habit.
 
-Version 2.0
+## Features
+
+- Real-time detection of nail-biting gestures using webcam
+- Hybrid detection approach:
+  - Geometric detection using MediaPipe hand and face landmarks
+  - ML-based detection using MobileNetV3-Large model
+- Intelligent ROI (Region of Interest) extraction focused on hand-mouth interaction
+- Visual feedback with detection status and confidence levels
+- Audible alerts when nail-biting is detected
+- Session tracking and daily statistics
+- Adjustable sensitivity settings
+
+## Requirements
+
+- Python 3.8+
+- Webcam
+- Required libraries (see requirements.txt)
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/nail-biting-detection.git
+cd nail-biting-detection
+```
+
+2. Create and activate a virtual environment:
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+## Usage
+
+1. Start the application:
+```bash
+python src/main.py
+```
+
+2. Adjust detection settings:
+   - Detection Sensitivity: Controls the geometric detection thresholds
+   - ML Confidence: Sets the confidence threshold for ML-based detection
+
+3. Click "Start Monitoring" to begin detection
+
+## How It Works
+
+### Detection Approach
+
+The application uses a hybrid approach to detect nail-biting:
+
+1. **Geometric Detection**:
+   - Tracks hand and face landmarks using MediaPipe
+   - Calculates distance between fingertips and mouth
+   - Analyzes finger angles and positions
+   - Detects when fingers are clustered near the mouth
+
+2. **ML-Based Detection**:
+   - Uses MobileNetV3-Large model trained on nail-biting images
+   - Focuses on the hand-mouth interaction area with intelligent ROI extraction
+   - Provides confidence score for nail-biting detection
+
+3. **State Machine**:
+   - Tracks potential nail-biting gestures over time
+   - Requires consistent detection across multiple frames
+   - Implements cooldown period to avoid repeated alerts
+
+### Improved ROI Focus
+
+The application uses an intelligent ROI extraction method that:
+- Dynamically adjusts padding based on hand-mouth distance
+- Creates a square ROI to avoid distortion
+- Applies contrast normalization to enhance features
+- Centers the ROI on the hand-mouth interaction area
+
+### Advanced Data Augmentation
+
+Training employs enhanced data augmentation techniques:
+- **MixUp**: Combines pairs of images and their labels with varying weights
+- **Color space transformations**: HSV shifts, brightness/contrast adjustments
+- **Channel shifting**: Random modifications to RGB channel intensities
+- **Random noise**: Simulates varying lighting and image quality conditions
+
+## Development
+
+### Training the Model
+
+To train the ML model with your own data:
+
+1. Prepare your dataset:
+   - Place nail-biting images in `data/raw/nail_biting/`
+   - Place non-nail-biting images in `data/raw/non_nail_biting/`
+
+2. Process the dataset:
+```bash
+python detection/data_processor.py
+```
+
+3. Train the model:
+```bash
+python detection/train_model.py
+```
+
+## Version History
+
+### Version 3.0
+- Switched to MobileNetV3-Large model for improved performance
+- Enhanced ROI extraction with intelligent padding and normalization
+- Added contrast enhancement for better feature detection
+- Improved visualization with confidence indicators
+- Implemented advanced data augmentation (MixUp and color transformations)
+
+### Version 2.0
 - MediaPipe Hand Pose + Geometric Approach (Core Detection):
   * Uses MediaPipe's hand landmarks for reliable detection
   * Calculates the distance between fingertips and mouth landmarks
@@ -11,7 +128,7 @@ Version 2.0
 - Added support for Python 3.12
 - Updated to latest compatible libraries (TensorFlow 2.18+, MediaPipe 0.10.18+)
 
-Version 1.0
+### Version 1.0
 - MediaPipe Hand Pose + Geometric Approach (Quick Solution):
   * Instead of relying on the pre-trained classification model, the model uses MediaPipe's hand landmarks
   * Calculate the distance between fingertips and mouth landmarks
@@ -19,115 +136,12 @@ Version 1.0
   * Add gesture recognition for common nail-biting poses
   * This would be more reliable and faster than the current ML approach as an MVP
 
-## Features
+## License
 
-- Real-time webcam monitoring
-- Hand and face detection using MediaPipe
-- Visual feedback with colored rectangles:
-  - Blue: Hand detection
-  - Green: Mouth detection
-  - Red: Nail-biting detected
-- Audio alerts when nail-biting is detected
-- Adjustable detection sensitivity
-- Event logging for tracking behavior
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Requirements
+## Acknowledgments
 
-- Python 3.8-3.12 (Python 3.12 recommended)
-- Webcam
-- The required Python packages are listed in `requirements.txt`
-
-## Installation
-
-### Option 1: Using Dev Container (Recommended)
-
-If you're using VS Code with the Dev Containers extension:
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd nail-biting-detection
-```
-
-2. Open the project in VS Code and reopen in container when prompted.
-The container will automatically set up Python 3.12 and install all dependencies.
-
-### Option 2: Manual Setup with Python 3.12
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd nail-biting-detection
-```
-
-2. Run the setup script:
-```bash
-./setup_py312.sh
-```
-
-3. Activate the virtual environment:
-```bash
-source venv-py312/bin/activate
-```
-
-### Option 3: Traditional Setup (Python 3.8-3.10)
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd nail-biting-detection
-```
-
-2. Create and activate a virtual environment:
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
-```
-
-3. Install the required packages:
-```bash
-pip install -r requirements.txt
-```
-
-4. Generate the alert sound:
-```bash
-cd src/utils
-python generate_alert.py
-cd ../..
-```
-
-## Usage
-
-1. Start the application:
-```bash
-cd src
-python main.py
-```
-
-2. The application window will open with your webcam feed.
-
-3. Click the "Start Monitoring" button to begin detection.
-
-4. Adjust the sensitivity slider if needed:
-   - Higher values: More sensitive to hand-mouth proximity
-   - Lower values: Less sensitive
-
-5. The application will:
-   - Show blue rectangles around detected hands
-   - Show a green rectangle around your mouth
-   - Change rectangles to red when nail-biting is detected
-   - Play an alert sound
-   - Log the event
-
-6. Click "Stop Monitoring" to pause detection.
-
-## Logs
-
-The application creates daily log files in the `logs` directory. Each log entry includes:
-- Timestamp
-- Event type
-- Additional information (if any)
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
+- MediaPipe for hand and face landmark detection
+- TensorFlow for ML model training and inference
+- PySide6 for the GUI framework
