@@ -103,7 +103,10 @@ class GestureDetector:
         self.distance_threshold = 0.15 + (sensitivity * 0.15)  # 0.15 to 0.30
         self.angle_threshold = 45 + (sensitivity * 45)  # 45 to 90 degrees
         self.cluster_threshold = 0.05 + (sensitivity * 0.10)  # 0.05 to 0.15
-        self.ml_confidence_threshold = max(0.3, 0.8 - (sensitivity * 0.5))  # 0.8 to 0.3
+        
+        # Adjust ML threshold to match the model's output range (around 0.35-0.36)
+        # Lower values = more sensitive detection
+        self.ml_confidence_threshold = max(0.2, 0.4 - (sensitivity * 0.2))  # 0.4 to 0.2
     
     def calculate_distance(self, point1, point2):
         """Calculate Euclidean distance between two points."""
@@ -164,64 +167,97 @@ class GestureDetector:
         return angle < self.angle_threshold
     
     def update_state(self, near_fingers, pointing_fingers, bent_fingers, ml_prediction=None):
-        """Update the gesture state based on current detection and history."""
-        now = datetime.now()
+        """
+        Update the gesture state based on finger positions and ML prediction.
         
-        # Handle cooldown period
+        Args:
+            near_fingers: List of fingers that are near the mouth
+            pointing_fingers: List of fingers that are pointing to the mouth
+            bent_fingers: List of fingers that are bent
+            ml_prediction: Optional ML model prediction (0-1 value where higher means more likely nail biting)
+        """
+        # Get current time for timing calculations
+        current_time = datetime.now()
+        
+        # If we're in cooldown, check if we can exit
         if self.current_state == GestureState.COOLDOWN:
-            if self.last_detection_time and now - self.last_detection_time > self.cooldown_period:
+            if current_time - self.last_detection_time > self.cooldown_period:
                 self.current_state = GestureState.IDLE
                 self.consecutive_detections = 0
+                logging.debug("Exiting cooldown state")
             return False
         
-        # Hybrid detection system:
-        # 1. When hand is far away from the mouth, stay IDLE
-        # 2. When hand gets near to the mouth, start tracking potential biting
-        # 3. Only use ML model when hand is near mouth
+        # If no fingers are near the mouth, reset to IDLE
+        if not near_fingers:
+            self.current_state = GestureState.IDLE
+            self.last_detection_time = None
+            return False
         
-        # Step 1: Check if hand is near mouth
-        if len(near_fingers) == 0:
-            # Hand is far from mouth, reset state to IDLE
-            if self.current_state != GestureState.IDLE:
+        # Check if we have an ML prediction and it's above threshold
+        ml_confidence = 0.0
+        if ml_prediction is not None:
+            ml_confidence = float(ml_prediction)
+            logging.debug(f"ML prediction: {ml_confidence:.3f}, threshold: {self.ml_confidence_threshold:.3f}")
+        
+        # Calculate geometric confidence based on finger positions
+        # More near fingers, pointing fingers, and bent fingers increase confidence
+        geometric_confidence = (
+            (len(near_fingers) / 5.0) * 0.4 +  # Weight for near fingers
+            (len(pointing_fingers) / 5.0) * 0.3 +  # Weight for pointing fingers
+            (len(bent_fingers) / 5.0) * 0.3  # Weight for bent fingers
+        )
+        
+        # Combine geometric and ML confidence
+        # If ML prediction is available, use it as a boost
+        combined_confidence = geometric_confidence
+        if ml_prediction is not None:
+            # Normalize ML prediction to be more sensitive
+            # Map the typical range (0.35-0.37) to a wider range (0-0.5)
+            normalized_ml = max(0, min(0.5, (ml_confidence - 0.35) * 25))
+            combined_confidence = geometric_confidence + normalized_ml
+            logging.debug(f"Combined confidence: {combined_confidence:.3f} (Geometric: {geometric_confidence:.3f}, ML: {normalized_ml:.3f})")
+        
+        # State machine logic
+        if self.current_state == GestureState.IDLE:
+            if len(near_fingers) >= 1:
+                self.current_state = GestureState.HAND_NEAR_MOUTH
+                self.last_detection_time = current_time
+                logging.debug(f"State change: IDLE -> HAND_NEAR_MOUTH (near fingers: {near_fingers})")
+        
+        elif self.current_state == GestureState.HAND_NEAR_MOUTH:
+            # Check for potential biting
+            if combined_confidence >= 0.6:  # Threshold for potential biting
+                self.current_state = GestureState.POTENTIAL_BITING
+                self.last_detection_time = current_time
+                logging.debug(f"State change: HAND_NEAR_MOUTH -> POTENTIAL_BITING (confidence: {combined_confidence:.3f})")
+            elif len(near_fingers) == 0:
                 self.current_state = GestureState.IDLE
-            self.consecutive_detections = 0
-            return False
+                self.last_detection_time = current_time
+                logging.debug("State change: HAND_NEAR_MOUTH -> IDLE (no near fingers)")
         
-        # Step 2: Hand is near mouth, track potential biting
-        if len(pointing_fingers) > 0 and len(bent_fingers) > 0:
-            # Potential biting pattern detected
-            self.consecutive_detections += 1
-            
-            # Step 3: Confirm with ML model if available and we've seen enough frames
-            if self.consecutive_detections >= self.consecutive_frames_threshold:
-                # Only use ML model when we're already in a potential biting state
-                if self.current_state in [GestureState.POTENTIAL_BITING, GestureState.HAND_NEAR_MOUTH]:
-                    # If ML model is available and predicts biting
-                    if ml_prediction is not None:
-                        if ml_prediction > self.ml_confidence_threshold:
-                            # ML confirms biting
-                            self.current_state = GestureState.BITING
-                            self.last_detection_time = now
-                            self.current_state = GestureState.COOLDOWN
-                            self.consecutive_detections = 0
-                            return True
-                        # If ML model is confident it's NOT biting, reset detection counter
-                        elif ml_prediction < (1 - self.ml_confidence_threshold):
-                            self.consecutive_detections = max(0, self.consecutive_detections - 1)
-                    else:
-                        # No ML model, rely on geometric approach
-                        self.current_state = GestureState.BITING
-                        self.last_detection_time = now
-                        self.current_state = GestureState.COOLDOWN
-                        self.consecutive_detections = 0
-                        return True
-            
-            # Update state to POTENTIAL_BITING
-            self.current_state = GestureState.POTENTIAL_BITING
-        else:
-            # Hand is near mouth but no biting detected
-            self.current_state = GestureState.HAND_NEAR_MOUTH
-            self.consecutive_detections = max(0, self.consecutive_detections - 1)
+        elif self.current_state == GestureState.POTENTIAL_BITING:
+            # If confidence drops, go back to hand near mouth
+            if combined_confidence < 0.5:  # Lower threshold to exit potential biting
+                self.current_state = GestureState.HAND_NEAR_MOUTH
+                self.last_detection_time = current_time
+                logging.debug(f"State change: POTENTIAL_BITING -> HAND_NEAR_MOUTH (confidence dropped: {combined_confidence:.3f})")
+            # If no fingers are near, go back to idle
+            elif len(near_fingers) == 0:
+                self.current_state = GestureState.IDLE
+                self.last_detection_time = current_time
+                logging.debug("State change: POTENTIAL_BITING -> IDLE (no near fingers)")
+            # If we've been in potential biting state long enough, transition to biting
+            elif (self.last_detection_time is not None and 
+                  current_time - self.last_detection_time > timedelta(seconds=self.cooldown_period.total_seconds())):
+                self.current_state = GestureState.BITING
+                self.last_detection_time = current_time
+                logging.info(f"NAIL BITING DETECTED! Confidence: {combined_confidence:.3f}")
+        
+        elif self.current_state == GestureState.BITING:
+            # After detection, go to cooldown state
+            self.current_state = GestureState.COOLDOWN
+            self.last_detection_time = current_time
+            logging.debug("State change: BITING -> COOLDOWN")
         
         return False
     
