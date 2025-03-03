@@ -12,6 +12,18 @@ import base64
 from typing import Optional, Union, List
 import mimetypes
 
+# Add the project root to the path for relative imports
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(src_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
 def load_environment():
     """Load environment variables from .env files in order of precedence"""
     # Order of precedence:

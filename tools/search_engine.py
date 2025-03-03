@@ -6,6 +6,18 @@ import time
 from duckduckgo_search import DDGS
 import logging
 
+# Add the project root to the path for relative imports
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(src_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
 def search_with_retry(query, max_results=10, max_retries=3):
     """
     Search using DuckDuckGo and return results with image URLs.

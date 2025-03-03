@@ -19,12 +19,12 @@ def generate_beep():
     # Convert to 16-bit integer samples
     samples = [int(sample * 32767) for sample in signal]
     
-    # Get the absolute path to the resources directory
-    resources_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'resources')
-    os.makedirs(resources_dir, exist_ok=True)
+    # Get the absolute path to the sound directory
+    sound_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'assets', 'sound')
+    os.makedirs(sound_dir, exist_ok=True)
     
     # Create and configure the wave file
-    wave_path = os.path.join(resources_dir, 'alert.wav')
+    wave_path = os.path.join(sound_dir, 'alert.wav')
     with wave.open(wave_path, 'w') as wave_file:
         # Set parameters
         nchannels = 1  # mono
@@ -39,6 +39,8 @@ def generate_beep():
         # Write the samples
         for sample in samples:
             wave_file.writeframes(struct.pack('h', sample))
+    
+    print(f"Generated alert sound at {wave_path}")
 
 if __name__ == '__main__':
     generate_beep() 

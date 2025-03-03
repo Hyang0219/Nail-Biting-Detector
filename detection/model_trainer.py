@@ -8,6 +8,7 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 import numpy as np
 from datetime import datetime
 import logging
+import sys
 
 class ModelTrainer:
     def __init__(self, data_dir='data', model_dir='models'):
@@ -51,8 +52,7 @@ class ModelTrainer:
                 channel_shift_range=30.0,  # Random shifts in RGB channels
                 # HSV shifts can be simulated with preprocessing function
                 preprocessing_function=self.color_augmentation,
-                fill_mode='nearest',
-                validation_split=validation_split
+                fill_mode='nearest'
             )
         else:
             # Simplified augmentation for faster training
@@ -61,43 +61,59 @@ class ModelTrainer:
                 rotation_range=10,
                 width_shift_range=0.1,
                 height_shift_range=0.1,
-                horizontal_flip=True,
-                validation_split=validation_split
+                horizontal_flip=True
             )
         
-        # Only rescaling for validation
-        val_datagen = ImageDataGenerator(
-            rescale=1./255,
-            validation_split=validation_split
+        # Only rescaling for test/validation data
+        test_datagen = ImageDataGenerator(
+            rescale=1./255
         )
         
-        # Load training data
+        # Load training data from train directory
+        train_dir = os.path.join(self.data_dir, 'train')
+        if not os.path.exists(train_dir):
+            self.logger.error(f"Training directory not found: {train_dir}")
+            self.logger.error("Make sure to run load_hf_dataset.py with --convert-to-local first")
+            sys.exit(1)
+        
         train_ds = train_datagen.flow_from_directory(
-            os.path.join(self.data_dir, 'processed'),
+            train_dir,
             target_size=self.input_size,
             batch_size=self.batch_size,
             class_mode='binary',
-            subset='training',
             shuffle=True
         )
         
-        # Load validation data
-        val_ds = val_datagen.flow_from_directory(
-            os.path.join(self.data_dir, 'processed'),
+        # Load test data as validation set
+        test_dir = os.path.join(self.data_dir, 'test')
+        if not os.path.exists(test_dir):
+            self.logger.error(f"Test directory not found: {test_dir}")
+            self.logger.error("Make sure to run load_hf_dataset.py with --convert-to-local first")
+            sys.exit(1)
+            
+        val_ds = test_datagen.flow_from_directory(
+            test_dir,
             target_size=self.input_size,
             batch_size=self.batch_size,
             class_mode='binary',
-            subset='validation',
-            shuffle=True
+            shuffle=False  # No need to shuffle test data
         )
         
         # Store dataset sizes before potentially wrapping with MixUp
         self.train_samples = train_ds.n
         self.val_samples = val_ds.n
+        
+        # Get class counts from the directory structure
         self.class_counts = {
-            0: len(os.listdir(os.path.join(self.data_dir, 'processed/non_nail_biting'))),
-            1: len(os.listdir(os.path.join(self.data_dir, 'processed/nail_biting')))
+            # Here we need to map the class indices correctly
+            class_idx: len(os.listdir(os.path.join(train_dir, class_name)))
+            for class_name, class_idx in train_ds.class_indices.items()
         }
+        
+        self.logger.info(f"Found {self.train_samples} training images belonging to {len(train_ds.class_indices)} classes")
+        self.logger.info(f"Found {self.val_samples} validation images belonging to {len(val_ds.class_indices)} classes")
+        self.logger.info(f"Class indices: {train_ds.class_indices}")
+        self.logger.info(f"Class counts: {self.class_counts}")
         
         # If using MixUp, wrap the training dataset
         if self.use_mixup:
@@ -217,16 +233,16 @@ class ModelTrainer:
     
     def train(self, epochs=20, validation_split=0.2):
         """Train the model."""
-        # Prepare datasets
-        train_ds, val_ds = self.prepare_dataset(validation_split)
+        # Prepare datasets - ignore validation_split as we use the test set directly
+        train_ds, val_ds = self.prepare_dataset()
         
         # Calculate class weights using stored sample counts
         total_samples = self.train_samples + self.val_samples
         
-        class_weights = {
-            0: total_samples / (2 * self.class_counts[0]),
-            1: total_samples / (2 * self.class_counts[1])
-        }
+        class_weights = {}
+        for class_idx in self.class_counts:
+            if self.class_counts[class_idx] > 0:  # Avoid division by zero
+                class_weights[class_idx] = total_samples / (2 * self.class_counts[class_idx])
         
         self.logger.info(f"Class weights: {class_weights}")
         
@@ -297,8 +313,10 @@ class ModelTrainer:
         self.logger.info(f"- Validation samples: {self.val_samples}")
         
         # Calculate steps per epoch to avoid infinite generator issue
-        steps_per_epoch = self.train_samples // self.batch_size
-        validation_steps = self.val_samples // self.batch_size
+        # Adjust steps_per_epoch to be slightly less than the total number of batches
+        # to avoid running out of data
+        steps_per_epoch = (self.train_samples // self.batch_size) - 1
+        validation_steps = (self.val_samples // self.batch_size) - 1
         
         # Ensure at least one step
         steps_per_epoch = max(1, steps_per_epoch)

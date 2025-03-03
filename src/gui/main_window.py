@@ -1,19 +1,43 @@
-from PySide6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, 
-                               QPushButton, QLabel, QSlider, QHBoxLayout,
-                               QGroupBox, QGridLayout)
+# Standard library imports
+import os
+import sys
+import platform
+import subprocess
+import threading
+import time
+import traceback
+from datetime import datetime, timedelta
+import logging
+
+# Add the project root to the path for relative imports
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(src_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+# GUI imports
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, 
+    QPushButton, QLabel, QSlider, QHBoxLayout
+)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
+
+# Computer vision imports
 import cv2
 import mediapipe as mp
-from datetime import datetime
-import logging
-import simpleaudio as sa
 import numpy as np
-import os
 
+# Local imports
 from detection.gesture_detector import GestureDetector
-from utils.logger import setup_logger
-from utils.analytics import Analytics
+from src.utils.logger import setup_logger
+from src.utils.analytics import Analytics
+
+# Import the gesture detector
+from detection.gesture_detector import GestureDetector, GestureState
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -25,6 +49,8 @@ class MainWindow(QMainWindow):
         self.setup_logger()
         self.setup_analytics()
         self.setup_alert_sound()
+        self.last_alert_time = datetime.now()
+        self.alert_cooldown = 2  # seconds
         
     def setup_ui(self):
         # Create central widget and layout
@@ -45,37 +71,17 @@ class MainWindow(QMainWindow):
         self.toggle_button.clicked.connect(self.toggle_monitoring)
         controls_layout.addWidget(self.toggle_button)
         
-        # Detection settings group
-        detection_group = QGroupBox("Detection Settings")
-        detection_layout = QGridLayout()
-        detection_group.setLayout(detection_layout)
-        
         # Sensitivity slider
+        sensitivity_layout = QVBoxLayout()
         sensitivity_label = QLabel("Detection Sensitivity:")
         self.sensitivity_slider = QSlider(Qt.Orientation.Horizontal)
         self.sensitivity_slider.setMinimum(1)
         self.sensitivity_slider.setMaximum(10)
         self.sensitivity_slider.setValue(5)
-        self.sensitivity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.sensitivity_slider.setTickInterval(1)
         self.sensitivity_slider.valueChanged.connect(self.update_sensitivity)
-        detection_layout.addWidget(sensitivity_label, 0, 0)
-        detection_layout.addWidget(self.sensitivity_slider, 0, 1)
-        
-        # ML Confidence threshold slider
-        threshold_label = QLabel("ML Confidence:")
-        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
-        self.threshold_slider.setMinimum(10)
-        self.threshold_slider.setMaximum(90)
-        self.threshold_slider.setValue(50)  # Default 0.5
-        self.threshold_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.threshold_slider.setTickInterval(10)
-        self.threshold_slider.valueChanged.connect(self.update_threshold)
-        detection_layout.addWidget(threshold_label, 1, 0)
-        detection_layout.addWidget(self.threshold_slider, 1, 1)
-        
-        # Add settings group to controls
-        controls_layout.addWidget(detection_group)
+        sensitivity_layout.addWidget(sensitivity_label)
+        sensitivity_layout.addWidget(self.sensitivity_slider)
+        controls_layout.addLayout(sensitivity_layout)
         
         # Status label
         self.status_label = QLabel("Status: Not Monitoring")
@@ -85,6 +91,11 @@ class MainWindow(QMainWindow):
         self.stats_label = QLabel("Today's detections: 0")
         controls_layout.addWidget(self.stats_label)
         
+        # Add model type indicator
+        self.model_type_label = QLabel("Model: None")
+        self.model_type_label.setStyleSheet("background-color: #333; color: white; padding: 3px; border-radius: 3px;")
+        controls_layout.addWidget(self.model_type_label)
+        
         layout.addLayout(controls_layout)
         
     def setup_camera(self):
@@ -93,50 +104,15 @@ class MainWindow(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.is_monitoring = False
+        self.last_model_used = "None"
         
     def setup_detector(self):
         """Setup gesture detector."""
         # Use the best performing model
-        # Find the best model based on validation accuracy in filename
-        models_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'models')
-        model_files = [f for f in os.listdir(models_dir) if f.endswith('.keras')]
-        
-        # Try to find the best model by accuracy in filename
-        best_model = None
-        best_acc = 0.0
-        
-        for model_file in model_files:
-            try:
-                # Extract accuracy from filename (e.g., mobilenet_model_20250301-230908_03_0.688.keras)
-                if '_' in model_file and model_file.split('_')[-1].startswith('0.'):
-                    acc = float(model_file.split('_')[-1].split('.keras')[0])
-                    if acc > best_acc:
-                        best_acc = acc
-                        best_model = model_file
-            except:
-                continue
-        
-        if best_model:
-            model_path = os.path.join(models_dir, best_model)
-            self.logger.info(f"Using best model: {best_model} (accuracy: {best_acc})")
-        else:
-            # Fallback to the latest model
-            model_path = os.path.join(models_dir, 'mobilenet_model_20250301-230908_03_0.688.keras')
-            self.logger.info(f"Using fallback model: {model_path}")
-        
-        # Get current settings from UI
-        sensitivity = self.sensitivity_slider.value() / 10.0
-        
-        self.detector = GestureDetector(
-            model_path=model_path, 
-            sensitivity=sensitivity
-        )
-        
-        # Update status label
-        if self.detector.model is not None:
-            self.status_label.setText("Status: ML model loaded")
-        else:
-            self.status_label.setText("Status: Geometric detection only")
+        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
+                                'models', 'mobilenet_model_20250302-182824.keras')
+        self.detector = GestureDetector(model_path=model_path, 
+                                      sensitivity=self.sensitivity_slider.value() / 10.0)
         
     def setup_logger(self):
         self.logger = setup_logger()
@@ -145,77 +121,71 @@ class MainWindow(QMainWindow):
         self.analytics = Analytics()
         
     def setup_alert_sound(self):
-        """Set up alert sound with multiple fallback options."""
+        """Set up platform-specific alert methods."""
         try:
-            # First try to use QSound if available
-            try:
-                from PySide6.QtMultimedia import QSoundEffect
-                from PySide6.QtCore import QUrl
-                
-                self.sound_system = "qsound"
-                self.sound_effect = QSoundEffect()
-                
-                # Try to load a WAV file if it exists
-                sound_file = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 
-                                         'assets', 'alert.wav')
-                
-                if os.path.exists(sound_file):
-                    self.sound_effect.setSource(QUrl.fromLocalFile(sound_file))
-                    self.logger.info(f"Loaded alert sound from {sound_file}")
-                else:
-                    # Create assets directory if it doesn't exist
-                    assets_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'assets')
-                    os.makedirs(assets_dir, exist_ok=True)
-                    
-                    # Generate a simple beep sound using simpleaudio as fallback
-                    self.generate_wav_file(sound_file)
-                    self.sound_effect.setSource(QUrl.fromLocalFile(sound_file))
-                    self.logger.info(f"Generated and loaded alert sound to {sound_file}")
-                
-                self.sound_effect.setVolume(0.5)
-                self.logger.info("Alert sound initialized using QSoundEffect")
-                return
-            except ImportError:
-                self.logger.warning("QSoundEffect not available, falling back to simpleaudio")
+            self.system = platform.system()
+            self.logger.info(f"Setting up alert for platform: {self.system}")
             
-            # Fallback to simpleaudio
-            self.sound_system = "simpleaudio"
-            frequency = 440  # Hz (A4 note)
-            duration = 0.5  # seconds
-            sample_rate = 44100  # Hz
-            t = np.linspace(0, duration, int(sample_rate * duration))
-            samples = (np.sin(2 * np.pi * frequency * t) * 32767).astype(np.int16)
-            self.alert_sound = sa.WaveObject(samples, 1, 2, sample_rate)
-            self.logger.info("Alert sound initialized using simpleaudio")
+            # Get the path to the custom alert sound
+            self.alert_sound_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                                               'assets', 'sound', 'apt.WAV')
             
+            if not os.path.exists(self.alert_sound_path):
+                self.logger.warning(f"Custom alert sound not found at {self.alert_sound_path}, will use system sounds")
+                self.alert_sound_path = None
+            else:
+                self.logger.info(f"Found custom alert sound at {self.alert_sound_path}")
+            
+            # Test the alert system
+            if self.system == "Darwin":  # macOS
+                try:
+                    # Check if we can play sounds via afplay
+                    subprocess.run(["afplay", "--help"], 
+                                  stdout=subprocess.DEVNULL, 
+                                  stderr=subprocess.DEVNULL)
+                    self.sound_loaded = True
+                except:
+                    self.logger.warning("afplay not available on macOS, alert sounds will be disabled")
+                    self.sound_loaded = False
+            elif self.system == "Windows":
+                try:
+                    # Check if we can use winsound
+                    import winsound
+                    self.sound_loaded = True
+                except ImportError:
+                    self.logger.warning("winsound not available on Windows, alert sounds will be disabled")
+                    self.sound_loaded = False
+            elif self.system == "Linux":
+                try:
+                    # Try paplay first (PulseAudio)
+                    subprocess.run(["paplay", "--version"], 
+                                  stdout=subprocess.DEVNULL, 
+                                  stderr=subprocess.DEVNULL)
+                    self.sound_loaded = True
+                except:
+                    try:
+                        # Fallback to aplay (ALSA)
+                        subprocess.run(["aplay", "--version"], 
+                                      stdout=subprocess.DEVNULL, 
+                                      stderr=subprocess.DEVNULL)
+                        self.sound_loaded = True
+                    except:
+                        self.logger.warning("Neither paplay nor aplay available on Linux, alert sounds will be disabled")
+                        self.sound_loaded = False
+            else:
+                self.logger.warning(f"Unsupported platform: {self.system}, alert sounds will be disabled")
+                self.sound_loaded = False
+                
+            if self.sound_loaded:
+                self.logger.info("Alert sound system initialized successfully")
+            else:
+                self.logger.warning("Alert sound system could not be initialized")
+                
         except Exception as e:
-            self.logger.error(f"Failed to initialize alert sound: {e}")
-            self.sound_system = "none"
-            self.alert_sound = None
-    
-    def generate_wav_file(self, file_path):
-        """Generate a WAV file for alert sound."""
-        try:
-            import wave
-            
-            # Generate a simple beep sound
-            frequency = 440  # Hz (A4 note)
-            duration = 0.5  # seconds
-            sample_rate = 44100  # Hz
-            t = np.linspace(0, duration, int(sample_rate * duration))
-            samples = (np.sin(2 * np.pi * frequency * t) * 32767).astype(np.int16)
-            
-            # Write to WAV file
-            with wave.open(file_path, 'w') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(sample_rate)
-                wf.writeframes(samples.tobytes())
-                
-            self.logger.info(f"Generated WAV file at {file_path}")
-        except Exception as e:
-            self.logger.error(f"Failed to generate WAV file: {e}")
-            
+            self.logger.error(f"Error setting up alert sound: {e}")
+            self.logger.error(traceback.format_exc())
+            self.sound_loaded = False
+        
     def update_sensitivity(self):
         """Update detector sensitivity when slider changes."""
         if hasattr(self, 'detector'):
@@ -223,102 +193,197 @@ class MainWindow(QMainWindow):
             sensitivity = self.sensitivity_slider.value() / 10.0
             self.detector.update_sensitivity(sensitivity)
             
-    def update_threshold(self):
-        """Update ML threshold when slider changes."""
-        if hasattr(self, 'detector'):
-            # Convert slider value (10-90) to threshold (0.1-0.9)
-            threshold = self.threshold_slider.value() / 100.0
-            self.detector.ml_confidence_threshold = threshold
+            # Update status label with current sensitivity value
+            if self.is_monitoring:
+                self.status_label.setText(f"Status: Monitoring Active (Sensitivity: {sensitivity:.1f})")
+            else:
+                self.status_label.setText(f"Status: Not Monitoring (Sensitivity: {sensitivity:.1f})")
+            
+            self.logger.info(f"Sensitivity updated to {sensitivity:.1f}")
         
     def toggle_monitoring(self):
         """Toggle webcam monitoring on/off."""
         if not self.is_monitoring:
             self.timer.start(30)  # 30ms = ~33 fps
             self.toggle_button.setText("Stop Monitoring")
+            self.status_label.setText("Status: Monitoring Active")
             self.is_monitoring = True
-            # Update status label
-            current_status = self.status_label.text().split(": ")[1]
-            self.status_label.setText(f"Status: Monitoring ({current_status})")
         else:
             self.timer.stop()
             self.toggle_button.setText("Start Monitoring")
+            self.status_label.setText("Status: Not Monitoring")
             self.is_monitoring = False
             # End analytics session
-            self.analytics.end_session()
+            try:
+                self.analytics.end_session()
+            except Exception as e:
+                self.logger.error(f"Error ending analytics session: {e}")
             # Update statistics display
             self.update_statistics()
-            # Update status label
-            if self.detector.model is not None:
-                self.status_label.setText("Status: ML model loaded")
-            else:
-                self.status_label.setText("Status: Geometric detection only")
             
     def update_frame(self):
         """Process and display the next frame."""
+        ret, frame = self.cap.read()
+        if not ret:
+            self.logger.error("Failed to capture frame from camera")
+            return
+            
         try:
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                self.logger.warning("Failed to read frame from camera")
-                return
-                
             # Process frame with detector
-            try:
-                frame_with_detections, is_biting = self.detector.process_frame(frame)
+            frame_with_detections, is_biting, model_used = self.detector.process_frame_with_model_info(frame)
+            
+            # Update model type indicator
+            if model_used != self.last_model_used:
+                self.last_model_used = model_used
+                self.update_model_indicator(model_used)
+            
+            # Update status label based on detector state
+            if hasattr(self.detector, 'current_state'):
+                state = self.detector.current_state
+                sensitivity = self.sensitivity_slider.value() / 10.0
                 
-                if is_biting:
-                    self.play_alert()
-                    self.log_event()
-                
-                # Convert frame to Qt format and display
-                rgb_frame = cv2.cvtColor(frame_with_detections, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_frame.shape
-                bytes_per_line = ch * w
-                qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-                self.camera_label.setPixmap(QPixmap.fromImage(qt_image))
-            except Exception as e:
-                self.logger.error(f"Error processing frame: {e}")
-                # Display the original frame if processing fails
-                rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                h, w, ch = rgb_frame.shape
-                bytes_per_line = ch * w
-                qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-                self.camera_label.setPixmap(QPixmap.fromImage(qt_image))
+                if state.name == "COOLDOWN":
+                    # Show cooldown timer
+                    now = datetime.now()
+                    if self.detector.last_detection_time:
+                        remaining = (self.detector.cooldown_period - (now - self.detector.last_detection_time)).total_seconds()
+                        if remaining > 0:
+                            self.status_label.setText(f"Status: Cooldown ({remaining:.1f}s)")
+                            self.status_label.setStyleSheet("color: red; font-weight: bold;")
+                elif self.is_monitoring:
+                    self.status_label.setText(f"Status: Monitoring Active (Sensitivity: {sensitivity:.1f})")
+                    self.status_label.setStyleSheet("")
+            
+            # Check if we should alert (with cooldown protection)
+            now = datetime.now()
+            if is_biting and (now - self.last_alert_time).total_seconds() > self.alert_cooldown:
+                self.last_alert_time = now
+                # Separate thread for alert to avoid blocking UI
+                QTimer.singleShot(0, self.play_alert)
+                QTimer.singleShot(0, self.log_event)
+            
+            # Convert frame to Qt format and display
+            rgb_frame = cv2.cvtColor(frame_with_detections, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_frame.shape
+            bytes_per_line = ch * w
+            qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            self.camera_label.setPixmap(QPixmap.fromImage(qt_image))
         except Exception as e:
-            self.logger.error(f"Critical error in update_frame: {e}")
+            self.logger.error(f"Error processing frame: {e}")
+            self.logger.error(traceback.format_exc())
+            
+    def update_model_indicator(self, model_used):
+        """Update the model type indicator."""
+        self.model_type_label.setText(f"Model: {model_used}")
+        
+        # Set background color based on model type
+        if model_used == "ML":
+            self.model_type_label.setStyleSheet("background-color: #007700; color: white; padding: 3px; border-radius: 3px;")
+        elif model_used == "MediaPipe":
+            self.model_type_label.setStyleSheet("background-color: #000077; color: white; padding: 3px; border-radius: 3px;")
+        else:
+            self.model_type_label.setStyleSheet("background-color: #333; color: white; padding: 3px; border-radius: 3px;")
             
     def play_alert(self):
-        """Play alert sound with multiple fallback mechanisms."""
+        """Play alert sound using platform-specific methods."""
+        if not hasattr(self, 'sound_loaded') or not self.sound_loaded:
+            self.logger.warning("Alert sound not enabled, skipping alert")
+            return
+            
         try:
-            if self.sound_system == "qsound":
-                if hasattr(self, 'sound_effect'):
-                    self.sound_effect.play()
-            elif self.sound_system == "simpleaudio":
-                if hasattr(self, 'alert_sound') and self.alert_sound is not None:
-                    play_obj = self.alert_sound.play()
-                    # Don't wait for playback to finish to avoid blocking the UI
-            else:
-                self.logger.warning("No sound system available, skipping alert sound")
+            self.logger.info("Playing alert sound")
+            
+            # Try to use the custom alert sound if available
+            if hasattr(self, 'alert_sound_path') and self.alert_sound_path and os.path.exists(self.alert_sound_path):
+                if self.system == "Darwin":  # macOS
+                    subprocess.Popen(["afplay", self.alert_sound_path], 
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+                    return
+                elif self.system == "Windows":
+                    try:
+                        import winsound
+                        winsound.PlaySound(self.alert_sound_path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                        return
+                    except ImportError:
+                        self.logger.warning("winsound not available on Windows")
+                elif self.system == "Linux":
+                    try:
+                        subprocess.Popen(["paplay", self.alert_sound_path],
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                        return
+                    except:
+                        try:
+                            subprocess.Popen(["aplay", "-q", self.alert_sound_path],
+                                           stdout=subprocess.DEVNULL,
+                                           stderr=subprocess.DEVNULL)
+                            return
+                        except:
+                            self.logger.warning("Could not play custom sound on Linux, falling back to system sounds")
+            
+            # Fallback to system sounds if custom sound failed or is not available
+            if self.system == "Darwin":  # macOS
+                # Use the built-in macOS 'afplay' command with a system sound
+                subprocess.Popen(["afplay", "/System/Library/Sounds/Ping.aiff"], 
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
+            elif self.system == "Windows":
+                # Use winsound on Windows
+                try:
+                    import winsound
+                    winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+                except ImportError:
+                    self.logger.warning("winsound not available on Windows")
+            elif self.system == "Linux":
+                # Try to use a system sound on Linux
+                try:
+                    subprocess.Popen(["paplay", "/usr/share/sounds/freedesktop/stereo/bell.oga"],
+                                   stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL)
+                except:
+                    try:
+                        # Fallback to aplay with a simple beep
+                        subprocess.Popen(["aplay", "-q", "/usr/share/sounds/alsa/Front_Center.wav"],
+                                       stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL)
+                    except:
+                        self.logger.warning("Could not play sound on Linux")
+            
         except Exception as e:
             self.logger.error(f"Failed to play alert sound: {e}")
-            # Don't try to reinitialize here to avoid potential crash
+            self.logger.error(traceback.format_exc())
+            # Disable sound for future alerts to prevent further issues
+            self.sound_loaded = False
             
     def log_event(self):
         # Log the event
-        self.logger.info("Nail biting detected")
-        
-        # Record in analytics
-        self.analytics.record_detection()
-        
-        # Update statistics display
-        self.update_statistics()
+        try:
+            self.logger.info("Nail biting detected")
+            
+            # Record in analytics
+            self.analytics.record_detection()
+            
+            # Update statistics display
+            self.update_statistics()
+        except Exception as e:
+            self.logger.error(f"Error logging nail biting event: {e}")
+            self.logger.error(traceback.format_exc())
         
     def update_statistics(self):
         """Update the statistics display."""
-        daily_summary = self.analytics.get_daily_summary(days=1)[0]
-        self.stats_label.setText(f"Today's detections: {daily_summary['detections']}")
+        try:
+            daily_summary = self.analytics.get_daily_summary(days=1)[0]
+            self.stats_label.setText(f"Today's detections: {daily_summary['detections']}")
+        except Exception as e:
+            self.logger.error(f"Error updating statistics: {e}")
+            self.stats_label.setText("Today's detections: --")
             
     def closeEvent(self, event):
         if self.is_monitoring:
-            self.analytics.end_session()
+            try:
+                self.analytics.end_session()
+            except Exception as e:
+                self.logger.error(f"Error ending analytics session during close: {e}")
         self.cap.release()
         super().closeEvent(event) 

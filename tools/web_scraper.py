@@ -16,6 +16,18 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urljoin
 
+# Add the project root to the path for relative imports
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(src_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
