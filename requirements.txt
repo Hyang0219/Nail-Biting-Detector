@@ -1,25 +1,30 @@
 # Core dependencies
 numpy>=1.24.0
-scipy>=1.10.1
 pandas>=2.0.0
 python-dateutil>=2.8.2
-pytz>=2023.3
-PySide6>=6.5.2
+PySide6>=6.5.2  # GUI framework (not required for headless mode)
 
 # Computer Vision and ML
-opencv-python>=4.8.0
-mediapipe>=0.10.18
-tensorflow>=2.18.0; platform_system!="Darwin"
-tensorflow-macos>=2.16.2; platform_system=="Darwin"
-keras>=3.0.0
-h5py>=3.9.0
-pillow>=10.0.0
-scikit-learn>=1.2.2
+opencv-python>=4.8.0  # Computer vision
+mediapipe>=0.10.18  # Hand and face tracking
+tensorflow>=2.18.0; platform_system!="Darwin"  # ML framework for non-macOS
+tensorflow-macos>=2.16.2; platform_system=="Darwin"  # ML framework for macOS
+keras>=3.0.0  # High-level neural networks API
+imageio>=2.31.0  # For handling animated GIFs
 
-# Visualization
-matplotlib>=3.7.2
-seaborn>=0.13.0
+# Data handling and serialization
+h5py>=3.9.0  # For loading Keras models 
+pillow>=10.0.0  # Image processing (also supports WebP)
+scikit-learn>=1.2.2  # For metrics calculation
+
+# Optional - for training/evaluation
+matplotlib>=3.7.2  # For plotting (only needed for training/evaluation)
+seaborn>=0.13.0  # For visualization (only needed for training/evaluation)
 
 # Audio processing
 sounddevice>=0.4.6
 soundfile>=0.12.1 
+
+# For headless mode in containers
+# If running in a container without GUI, use:
+# python run_outside_container.py --headless --test 

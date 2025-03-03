@@ -6,6 +6,18 @@ import os
 import tempfile
 from pathlib import Path
 
+# Add the project root to the path for relative imports
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.dirname(current_dir)
+project_root = os.path.dirname(src_dir)
+if src_dir not in sys.path:
+    sys.path.insert(0, src_dir)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
 async def take_screenshot(url: str, output_path: str = None, width: int = 1280, height: int = 720) -> str:
     """
     Take a screenshot of a webpage using Playwright.

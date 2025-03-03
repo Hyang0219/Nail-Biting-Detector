@@ -1,6 +1,23 @@
-# Nail-Biting Detection Application
+# Nail Biting Detection Application
+(https://huggingface.co/datasets/alecsharpie/nailbiting_classification)
 
 This application uses computer vision to detect nail-biting behavior and alerts users in real-time. It uses your computer's webcam to monitor hand movements near the mouth and provides immediate feedback when nail-biting is detected.
+
+Version 3.0
+- Optimized Hybrid Detection Pipeline:
+  * Refined two-stage detection approach for better performance
+  * First uses MediaPipe to detect hand-to-mouth proximity
+  * Only triggers MobileNet ML model when geometric conditions suggest potential nail biting
+  * Reduces computational load while maintaining high accuracy
+- Enhanced Visual Feedback System:
+  * Added animated sticker alerts with WebP and GIF support
+  * Implemented real-time animation playback at native speeds
+  * Improved visual alert visibility with semi-transparent backgrounds
+  * Added customizable preferred sticker selection
+- Improved Robustness:
+  * Enhanced error handling for more reliable execution
+  * Better management of optional dependencies
+  * Fixed import path issues for consistent performance
 
 Version 2.0
 - MediaPipe Hand Pose + Geometric Approach (Core Detection):
@@ -21,113 +38,115 @@ Version 1.0
 
 ## Features
 
-- Real-time webcam monitoring
-- Hand and face detection using MediaPipe
-- Visual feedback with colored rectangles:
-  - Blue: Hand detection
-  - Green: Mouth detection
-  - Red: Nail-biting detected
-- Audio alerts when nail-biting is detected
-- Adjustable detection sensitivity
-- Event logging for tracking behavior
+- **Real-time detection**: Uses a hybrid approach combining MediaPipe hand tracking and ML classification
+- **Visual feedback**: Shows which detection model is active (MediaPipe or ML)
+- **Alert system**: Plays a sound and displays animated stickers when nail biting is detected
+- **Adjustable sensitivity**: Slider to adjust detection sensitivity
+- **Analytics tracking**: Records and displays nail-biting incidents
+- **Cross-platform**: Works on macOS, Windows, and Linux
 
 ## Requirements
 
-- Python 3.8-3.12 (Python 3.12 recommended)
+- Python 3.8 or higher
 - Webcam
-- The required Python packages are listed in `requirements.txt`
+- Dependencies listed in `requirements.txt`
 
 ## Installation
 
-### Option 1: Using Dev Container (Recommended)
+1. Clone this repository:
+   ```
+   git clone https://github.com/yourusername/nail-biting-detection.git
+   cd nail-biting-detection
+   ```
 
-If you're using VS Code with the Dev Containers extension:
+2. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd nail-biting-detection
+3. Make sure you have the trained model in the `models` directory:
+   - The application expects to find `mobilenet_model_20250302-182824.keras` in the models directory
+   - If you don't have this file, you'll need to train the model first (see Training section)
+
+## Running the Application
+
+Simply run:
+
+```
+python run_outside_container.py
 ```
 
-2. Open the project in VS Code and reopen in container when prompted.
-The container will automatically set up Python 3.12 and install all dependencies.
+or make it executable and run directly:
 
-### Option 2: Manual Setup with Python 3.12
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd nail-biting-detection
+```
+chmod +x run_outside_container.py
+./run_outside_container.py
 ```
 
-2. Run the setup script:
-```bash
-./setup_py312.sh
+### Headless Mode
+
+For environments without display capabilities (like containers), you can run the application in headless mode:
+
+```
+python run_outside_container.py --headless
 ```
 
-3. Activate the virtual environment:
-```bash
-source venv-py312/bin/activate
+To run tests in headless mode:
+
+```
+python run_outside_container.py --headless --test
 ```
 
-### Option 3: Traditional Setup (Python 3.8-3.10)
+This will verify that the core functionality works without requiring a GUI.
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd nail-biting-detection
-```
+## Training the Model
 
-2. Create and activate a virtual environment:
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows, use: venv\Scripts\activate
-```
+If you need to train the model:
 
-3. Install the required packages:
-```bash
-pip install -r requirements.txt
-```
+1. Download the dataset:
+   ```
+   python load_hf_dataset.py --convert-to-local
+   ```
 
-4. Generate the alert sound:
-```bash
-cd src/utils
-python generate_alert.py
-cd ../..
-```
+2. Train the model:
+   ```
+   python train_improved_model.py
+   ```
+
+3. Evaluate the model:
+   ```
+   python evaluate_model.py --model-path models/your_model_name.keras --data-dir data/hf_dataset --simple-mode
+   ```
+
+The model training uses the [Nail Biting Classification dataset](https://huggingface.co/datasets/alecsharpie/nailbiting_classification) from Hugging Face.
 
 ## Usage
 
-1. Start the application:
-```bash
-cd src
-python main.py
-```
+1. Start the application using the command above
+2. Click "Start Monitoring" to begin detection
+3. Adjust the sensitivity slider as needed (higher values are more sensitive)
+4. The "Model" indicator shows which detection method is active:
+   - **MediaPipe**: Using geometric hand pose detection only (blue)
+   - **ML**: Using the trained ML model for classification (green)
+5. The application will alert you when nail biting is detected with:
+   - A sound alert
+   - An animated sticker displayed on screen
+6. Statistics are displayed and logged for future reference
 
-2. The application window will open with your webcam feed.
+## Project Structure
 
-3. Click the "Start Monitoring" button to begin detection.
+- `src/`: Source code for the application
+  - `gui/`: GUI components
+  - `utils/`: Utility functions (analytics, logging)
+- `detection/`: Detection algorithms and model training
+- `models/`: Trained ML models
+- `data/`: Dataset and analytics data
+- `logs/`: Application logs
+- `assets/`: Application assets
+  - `sound/`: Alert sound files
+  - `stickers/`: Visual stickers/GIFs for alerts
+- `run_outside_container.py`: Main script to run the application
 
-4. Adjust the sensitivity slider if needed:
-   - Higher values: More sensitive to hand-mouth proximity
-   - Lower values: Less sensitive
+## License
 
-5. The application will:
-   - Show blue rectangles around detected hands
-   - Show a green rectangle around your mouth
-   - Change rectangles to red when nail-biting is detected
-   - Play an alert sound
-   - Log the event
-
-6. Click "Stop Monitoring" to pause detection.
-
-## Logs
-
-The application creates daily log files in the `logs` directory. Each log entry includes:
-- Timestamp
-- Event type
-- Additional information (if any)
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
+[MIT License](LICENSE)
