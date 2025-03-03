@@ -65,7 +65,7 @@ Version 1.0
 
 1. Clone this repository:
    ```
-   git clone https://github.com/Hyang0219/Nail-Biting-Detector
+   git clone https://github.com/Hyang0219/Nail-Biting-Detector.git
    cd nail-biting-detection
    ```
 
