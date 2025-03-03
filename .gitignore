@@ -17,6 +17,16 @@ models/
 *.tflite
 saved_model/
 
+# Specific files to ignore
+train_improved_model.py
+load_hf_dataset.py
+evaluate_model.py
+evaluation_script.py
+test_output/
+evaluation_results/
+prediction_results/
+new-venv/
+
 # Logs
 logs/
 *.log
