@@ -1,5 +1,4 @@
 # Nail Biting Detection Application
-(https://huggingface.co/datasets/alecsharpie/nailbiting_classification)
 
 This application uses computer vision to detect nail-biting behavior and alerts users in real-time. It uses your computer's webcam to monitor hand movements near the mouth and provides immediate feedback when nail-biting is detected.
 
@@ -66,7 +65,7 @@ Version 1.0
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/nail-biting-detection.git
+   git clone https://github.com/Hyang0219/Nail-Biting-Detector
    cd nail-biting-detection
    ```
 
