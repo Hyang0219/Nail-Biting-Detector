@@ -40,9 +40,10 @@ from src.utils.analytics import Analytics
 from detection.gesture_detector import GestureDetector, GestureState
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, debug_roi=False):
         super().__init__()
         self.setWindowTitle("Nail-Biting Detection")
+        self.debug_roi = debug_roi
         self.setup_ui()
         self.setup_camera()
         self.setup_detector()
@@ -96,6 +97,13 @@ class MainWindow(QMainWindow):
         self.model_type_label.setStyleSheet("background-color: #333; color: white; padding: 3px; border-radius: 3px;")
         controls_layout.addWidget(self.model_type_label)
         
+        # Add ROI debugging toggle button
+        self.roi_debug_button = QPushButton("Show ROI" if self.debug_roi else "Hide ROI")
+        self.roi_debug_button.setCheckable(True)
+        self.roi_debug_button.setChecked(self.debug_roi)
+        self.roi_debug_button.clicked.connect(self.toggle_roi_debug)
+        controls_layout.addWidget(self.roi_debug_button)
+        
         layout.addLayout(controls_layout)
         
     def setup_camera(self):
@@ -113,6 +121,11 @@ class MainWindow(QMainWindow):
                                 'models', 'mobilenet_model_20250302-182824.keras')
         self.detector = GestureDetector(model_path=model_path, 
                                       sensitivity=self.sensitivity_slider.value() / 10.0)
+        
+        # Set ROI debugging based on command-line argument
+        if self.debug_roi:
+            self.detector.show_roi_debug = True
+            logging.info("ROI debugging visualization enabled")
         
     def setup_logger(self):
         self.logger = setup_logger()
@@ -386,4 +399,11 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.logger.error(f"Error ending analytics session during close: {e}")
         self.cap.release()
-        super().closeEvent(event) 
+        super().closeEvent(event)
+
+    def toggle_roi_debug(self):
+        """Toggle the ROI debug visualization."""
+        if hasattr(self, 'detector'):
+            is_enabled = self.detector.toggle_roi_debug()
+            self.roi_debug_button.setText("Show ROI" if not is_enabled else "Hide ROI")
+            logging.info(f"ROI debugging visualization {'enabled' if is_enabled else 'disabled'}") 

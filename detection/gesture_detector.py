@@ -89,6 +89,10 @@ class GestureDetector:
             logging.info("GestureDetector initialized without ML model")
         
         self.input_size = (224, 224)  # Model input size
+        
+        # For ROI visualization
+        self.current_roi_coords = None
+        self.show_roi_debug = True
     
     def load_stickers(self):
         """Load stickers/GIFs for display when nail biting is detected."""
@@ -249,9 +253,26 @@ class GestureDetector:
         duration_seconds = max(0.8, 2.0 - (sensitivity * 1.0))  # 2.0 to 0.8 seconds
         self.hand_near_duration = timedelta(seconds=duration_seconds)
     
+    def toggle_roi_debug(self, enabled=None):
+        """Toggle the ROI debug visualization.
+        
+        Args:
+            enabled: If None, toggles the current state. Otherwise, sets to the specified boolean value.
+        
+        Returns:
+            bool: The new state of the ROI debug visualization
+        """
+        if enabled is None:
+            self.show_roi_debug = not self.show_roi_debug
+        else:
+            self.show_roi_debug = bool(enabled)
+        
+        logging.debug(f"ROI debug visualization {'enabled' if self.show_roi_debug else 'disabled'}")
+        return self.show_roi_debug
+    
     def calculate_distance(self, point1, point2):
         """Calculate Euclidean distance between two points."""
-        return math.sqrt((point1[0] - point2[0])**2 + (point1[1] - point2[1])**2)
+        return math.sqrt(((point1[0] - point2[0]) ** 2) + ((point1[1] - point2[1]) ** 2))
     
     def calculate_angle(self, point1, point2, point3):
         """Calculate angle between three points (in degrees)."""
@@ -547,30 +568,49 @@ class GestureDetector:
     def get_roi_for_model(self, frame, hand_landmarks, mouth_bbox):
         """Extract and preprocess ROI for ML model."""
         try:
-            # Convert landmarks to numpy array
-            points = np.array([[lm.x * frame.shape[1], lm.y * frame.shape[0]] 
-                             for lm in hand_landmarks.landmark], dtype=np.int32)
+            # Extract fingertip landmarks only (we're most interested in these for nail biting)
+            fingertip_points = np.array([
+                [hand_landmarks.landmark[idx].x * frame.shape[1], 
+                 hand_landmarks.landmark[idx].y * frame.shape[0]] 
+                for idx in self.FINGERTIPS
+            ], dtype=np.int32)
             
-            # Get bounding box around hand
-            x, y, w, h = cv2.boundingRect(points)
+            # Get bounding box around fingertips
+            x, y, w, h = cv2.boundingRect(fingertip_points)
             
-            # Expand box to include mouth area if close
+            # Get mouth dimensions
             mx, my, mw, mh = mouth_bbox
-            combined_x = min(x, mx)
-            combined_y = min(y, my)
-            combined_w = max(x + w, mx + mw) - combined_x
-            combined_h = max(y + h, my + mh) - combined_y
             
-            # Add padding
-            pad = 20
-            combined_x = max(0, combined_x - pad)
-            combined_y = max(0, combined_y - pad)
-            combined_w = min(frame.shape[1] - combined_x, combined_w + 2*pad)
-            combined_h = min(frame.shape[0] - combined_y, combined_h + 2*pad)
+            # Create a more focused ROI that prioritizes the interaction area between fingertips and mouth
+            # Calculate the center points
+            fingertip_center_x = x + w//2
+            fingertip_center_y = y + h//2
+            mouth_center_x = mx + mw//2
+            mouth_center_y = my + mh//2
+            
+            # Calculate center of interaction area
+            interaction_center_x = (fingertip_center_x + mouth_center_x) // 2
+            interaction_center_y = (fingertip_center_y + mouth_center_y) // 2
+            
+            # Calculate ROI dimensions (make it large enough to capture the interaction, but focused)
+            # Use the distance between fingertips and mouth to determine size
+            distance = math.sqrt((fingertip_center_x - mouth_center_x)**2 + 
+                               (fingertip_center_y - mouth_center_y)**2)
+            
+            # Size the ROI relative to the distance, but with a minimum size
+            roi_size = max(int(distance * 1.5), 150)
+            
+            # Calculate ROI coordinates
+            roi_x = max(0, interaction_center_x - roi_size//2)
+            roi_y = max(0, interaction_center_y - roi_size//2)
+            roi_w = min(frame.shape[1] - roi_x, roi_size)
+            roi_h = min(frame.shape[0] - roi_y, roi_size)
+            
+            # Store ROI coordinates for visualization
+            self.current_roi_coords = (roi_x, roi_y, roi_w, roi_h)
             
             # Crop region
-            roi = frame[combined_y:combined_y+combined_h, 
-                      combined_x:combined_x+combined_w]
+            roi = frame[roi_y:roi_y+roi_h, roi_x:roi_x+roi_w]
             
             # Resize and preprocess for model
             if roi.size > 0:
@@ -582,6 +622,7 @@ class GestureDetector:
             return None
         except Exception as e:
             logging.error(f"Error preparing ROI: {e}")
+            self.current_roi_coords = None
             return None
     
     def process_frame(self, frame):
@@ -704,6 +745,28 @@ class GestureDetector:
                 # Draw line between hand center and mouth center
                 line_color = (0, 255, 0) if self.min_finger_mouth_distance < self.distance_threshold else (0, 0, 255)
                 cv2.line(frame_with_detections, mouth_center, hand_center, line_color, 2)
+                
+                # Draw ROI box for debugging if available
+                if self.show_roi_debug and self.current_roi_coords is not None:
+                    roi_x, roi_y, roi_w, roi_h = self.current_roi_coords
+                    # Draw ROI as semi-transparent gray box
+                    overlay = frame_with_detections.copy()
+                    cv2.rectangle(overlay, 
+                                (roi_x, roi_y), 
+                                (roi_x + roi_w, roi_y + roi_h), 
+                                (128, 128, 128), -1)
+                    # Add text label
+                    cv2.putText(overlay, "ML ROI", 
+                              (roi_x + 5, roi_y + 25),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
+                              (255, 255, 255), 2)
+                    # Blend with transparency
+                    cv2.addWeighted(overlay, 0.4, frame_with_detections, 0.6, 0, frame_with_detections)
+                    # Add border
+                    cv2.rectangle(frame_with_detections, 
+                                (roi_x, roi_y), 
+                                (roi_x + roi_w, roi_y + roi_h), 
+                                (128, 128, 128), 2)
                 
                 # Calculate positions for status panel in the middle-left
                 frame_height, frame_width = frame.shape[:2]

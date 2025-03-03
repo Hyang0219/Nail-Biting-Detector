@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run script for nail-biting detection application.
+Main script for nail-biting detection application.
 This script ensures the correct Python path is set up and dependencies are met.
 """
 
@@ -16,6 +16,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='Nail Biting Detection Application')
     parser.add_argument('--headless', action='store_true', help='Run in headless mode (no GUI)')
     parser.add_argument('--test', action='store_true', help='Run tests in headless mode')
+    parser.add_argument('--debug-roi', action='store_true', help='Enable visualization of the ML model Region Of Interest (ROI)')
     return parser.parse_args()
 
 def ensure_directories_exist():
@@ -137,6 +138,10 @@ def main():
                 # Initialize detector
                 detector = GestureDetector(model_path=model_path if os.path.exists(model_path) else None)
                 
+                # Set ROI debug if specified
+                if args.debug_roi:
+                    detector.show_roi_debug = True
+                
                 # Test sticker loading
                 print(f"Loaded {len(detector.stickers)} stickers")
                 
@@ -160,7 +165,7 @@ def main():
             from src.gui.main_window import MainWindow
             
             app = QApplication(sys.argv)
-            window = MainWindow()
+            window = MainWindow(debug_roi=args.debug_roi)
             window.show()
             sys.exit(app.exec())
     except Exception as e:

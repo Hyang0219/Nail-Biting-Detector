@@ -17,6 +17,25 @@ models/
 *.tflite
 saved_model/
 
+# Temporary/development files
+processing.log
+tools/training/train_improved_model.py
+tools/training/load_hf_dataset.py
+tools/training/evaluate_model.py
+tools/training/evaluation_script.py
+tools/testing/test_sticker_functionality.py
+tools/utils/verify_app.py
+tools/utils/fix_imports.py
+tools/utils/run_app.py
+test_output/
+evaluation_results/
+prediction_results/
+
+# Virtual environments
+new-venv/
+venv-py312/
+venv/
+
 # Logs
 logs/
 *.log
@@ -155,7 +174,6 @@ celerybeat.pid
 .venv
 env/
 venv/
-venv-py312/
 ENV/
 env.bak/
 venv.bak/
@@ -193,4 +211,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-data/
