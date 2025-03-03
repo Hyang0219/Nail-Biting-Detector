@@ -3,6 +3,13 @@
 
 This application uses computer vision to detect nail-biting behavior and alerts users in real-time. It uses your computer's webcam to monitor hand movements near the mouth and provides immediate feedback when nail-biting is detected.
 
+Version 3.1
+- Improved ML Model Input:
+  * Focused ROI (Region of Interest) for more accurate ML model prediction
+  * Added debugging visualization of ROI area via `--debug-roi` flag
+  * Reduced false positives by analyzing specific interaction areas between hand and mouth
+  * Better handling of hand proximity detection thresholds
+
 Version 3.0
 - Optimized Hybrid Detection Pipeline:
   * Refined two-stage detection approach for better performance
@@ -82,6 +89,27 @@ or make it executable and run directly:
 chmod +x run_outside_container.py
 ./run_outside_container.py
 ```
+
+### Command-Line Options
+
+The application supports several command-line options:
+
+```
+python run_outside_container.py [OPTIONS]
+```
+
+Available options:
+- `--headless`: Run in headless mode (no GUI)
+- `--test`: Run tests in headless mode
+- `--debug-roi`: Enable visualization of the ML model's Region Of Interest
+
+For example, to enable ROI debugging visualization:
+
+```
+python run_outside_container.py --debug-roi
+```
+
+This will show a semi-transparent gray box indicating the area being analyzed by the ML model.
 
 ### Headless Mode
 

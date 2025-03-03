@@ -17,15 +17,24 @@ models/
 *.tflite
 saved_model/
 
-# Specific files to ignore
+# Temporary/development files
+processing.log
 train_improved_model.py
 load_hf_dataset.py
 evaluate_model.py
 evaluation_script.py
+test_sticker_functionality.py
+verify_app.py
+fix_imports.py
+run_app.py  # Only track run_outside_container.py as the main entry point
 test_output/
 evaluation_results/
 prediction_results/
+
+# Virtual environments
 new-venv/
+venv-py312/
+venv/
 
 # Logs
 logs/
@@ -165,7 +174,6 @@ celerybeat.pid
 .venv
 env/
 venv/
-venv-py312/
 ENV/
 env.bak/
 venv.bak/
@@ -203,4 +211,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-data/
