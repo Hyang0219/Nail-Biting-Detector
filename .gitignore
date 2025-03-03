@@ -19,14 +19,14 @@ saved_model/
 
 # Temporary/development files
 processing.log
-train_improved_model.py
-load_hf_dataset.py
-evaluate_model.py
-evaluation_script.py
-test_sticker_functionality.py
-verify_app.py
-fix_imports.py
-run_app.py  # Only track run_outside_container.py as the main entry point
+tools/training/train_improved_model.py
+tools/training/load_hf_dataset.py
+tools/training/evaluate_model.py
+tools/training/evaluation_script.py
+tools/testing/test_sticker_functionality.py
+tools/utils/verify_app.py
+tools/utils/fix_imports.py
+tools/utils/run_app.py
 test_output/
 evaluation_results/
 prediction_results/

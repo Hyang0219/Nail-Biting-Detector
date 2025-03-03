@@ -9,6 +9,10 @@ Version 3.1
   * Added debugging visualization of ROI area via `--debug-roi` flag
   * Reduced false positives by analyzing specific interaction areas between hand and mouth
   * Better handling of hand proximity detection thresholds
+- Project Structure Improvements:
+  * Reorganized files into logical directories
+  * Renamed main script for better clarity
+  * Improved code organization and maintainability
 
 Version 3.0
 - Optimized Hybrid Detection Pipeline:
@@ -80,14 +84,14 @@ Version 1.0
 Simply run:
 
 ```
-python run_outside_container.py
+python main.py
 ```
 
 or make it executable and run directly:
 
 ```
-chmod +x run_outside_container.py
-./run_outside_container.py
+chmod +x main.py
+./main.py
 ```
 
 ### Command-Line Options
@@ -95,7 +99,7 @@ chmod +x run_outside_container.py
 The application supports several command-line options:
 
 ```
-python run_outside_container.py [OPTIONS]
+python main.py [OPTIONS]
 ```
 
 Available options:
@@ -106,7 +110,7 @@ Available options:
 For example, to enable ROI debugging visualization:
 
 ```
-python run_outside_container.py --debug-roi
+python main.py --debug-roi
 ```
 
 This will show a semi-transparent gray box indicating the area being analyzed by the ML model.
@@ -116,13 +120,13 @@ This will show a semi-transparent gray box indicating the area being analyzed by
 For environments without display capabilities (like containers), you can run the application in headless mode:
 
 ```
-python run_outside_container.py --headless
+python main.py --headless
 ```
 
 To run tests in headless mode:
 
 ```
-python run_outside_container.py --headless --test
+python main.py --headless --test
 ```
 
 This will verify that the core functionality works without requiring a GUI.
@@ -167,13 +171,17 @@ The model training uses the [Nail Biting Classification dataset](https://hugging
   - `gui/`: GUI components
   - `utils/`: Utility functions (analytics, logging)
 - `detection/`: Detection algorithms and model training
+- `tools/`: Utility tools and scripts
+  - `training/`: Model training and evaluation scripts
+  - `testing/`: Testing utilities
+  - `utils/`: Utility scripts
 - `models/`: Trained ML models
 - `data/`: Dataset and analytics data
 - `logs/`: Application logs
 - `assets/`: Application assets
   - `sound/`: Alert sound files
   - `stickers/`: Visual stickers/GIFs for alerts
-- `run_outside_container.py`: Main script to run the application
+- `main.py`: Main script to run the application
 
 ## License
 
